@@ -12,7 +12,9 @@ pub struct Agent {
     pub evolution_level: u32,
     pub created_at: u64,
     pub updated_at: u64,
-    pub nonce: u64, // For replay attack prevention
+    pub nonce: u64, 
+    pub escrow_locked: bool, 
+    pub escrow_holder: Option<Address>, 
 }
 
 /// Rate limiting window for security protection

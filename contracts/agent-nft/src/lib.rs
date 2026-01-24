@@ -53,20 +53,20 @@ impl AgentNFT {
         owner.require_auth();
         
         // Input validation
-        if name.len() > shared::MAX_STRING_LENGTH {
+        if name.len() > shared::MAX_STRING_LENGTH.try_into().unwrap() {
             panic!("Agent name exceeds maximum length");
         }
-        if model_hash.len() > shared::MAX_STRING_LENGTH {
+        if model_hash.len() > shared::MAX_STRING_LENGTH.try_into().unwrap() {
             panic!("Model hash exceeds maximum length");
         }
-        if capabilities.len() > shared::MAX_CAPABILITIES {
+        if capabilities.len() > shared::MAX_CAPABILITIES.try_into().unwrap() {
             panic!("Capabilities exceed maximum allowed");
         }
 
         // Validate each capability string
         for i in 0..capabilities.len() {
             if let Some(cap) = capabilities.get(i) {
-                if cap.len() > shared::MAX_STRING_LENGTH {
+                if cap.len() > shared::MAX_STRING_LENGTH.try_into().unwrap() {
                     panic!("Individual capability exceeds maximum length");
                 }
             }
@@ -91,10 +91,12 @@ impl AgentNFT {
             created_at: env.ledger().timestamp(),
             updated_at: env.ledger().timestamp(),
             nonce: 0,
+            escrow_locked: false,
+            escrow_holder: None,
         };
 
         // Store agent safely
-        let key = String::from_slice(&env, &format!("{}{}", AGENT_KEY_PREFIX, agent_id).as_bytes());
+        let key = String::from_str(&env, AGENT_KEY_PREFIX);
         env.storage().instance().set(&key, &agent);
         
         // Update counter
@@ -112,7 +114,7 @@ impl AgentNFT {
             panic!("Invalid agent ID: must be greater than 0");
         }
 
-        let key = String::from_slice(&env, &format!("{}{}", AGENT_KEY_PREFIX, agent_id).as_bytes());
+        let key = String::from_str(&env, AGENT_KEY_PREFIX);
         env.storage().instance().get::<_, shared::Agent>(&key)
     }
 
@@ -130,7 +132,7 @@ impl AgentNFT {
             panic!("Invalid agent ID: must be greater than 0");
         }
 
-        let key = String::from_slice(&env, &format!("{}{}", AGENT_KEY_PREFIX, agent_id).as_bytes());
+        let key = String::from_str(&env, AGENT_KEY_PREFIX);
         let mut agent: shared::Agent = env.storage()
             .instance()
             .get(&key)
@@ -141,21 +143,26 @@ impl AgentNFT {
             panic!("Unauthorized: only agent owner can update");
         }
 
+        // Escrow lock check: cannot update while locked in escrow
+        if agent.escrow_locked {
+            panic!("Agent is locked in escrow and cannot be updated");
+        }
+
         // Update fields with validation
         if let Some(new_name) = name {
-            if new_name.len() > shared::MAX_STRING_LENGTH {
+            if new_name.len() > shared::MAX_STRING_LENGTH.try_into().unwrap() {
                 panic!("Agent name exceeds maximum length");
             }
             agent.name = new_name;
         }
 
         if let Some(new_capabilities) = capabilities {
-            if new_capabilities.len() > shared::MAX_CAPABILITIES {
+            if new_capabilities.len() > shared::MAX_CAPABILITIES.try_into().unwrap() {
                 panic!("Capabilities exceed maximum allowed");
             }
             for i in 0..new_capabilities.len() {
                 if let Some(cap) = new_capabilities.get(i) {
-                    if cap.len() > shared::MAX_STRING_LENGTH {
+                    if cap.len() > shared::MAX_STRING_LENGTH.try_into().unwrap() {
                         panic!("Individual capability exceeds maximum length");
                     }
                 }
@@ -185,12 +192,113 @@ impl AgentNFT {
             panic!("Invalid agent ID: must be greater than 0");
         }
 
-        let key = String::from_slice(&env, &format!("{}{}", AGENT_KEY_PREFIX, agent_id).as_bytes());
+        let key = String::from_str(&env, AGENT_KEY_PREFIX);
         env.storage()
             .instance()
             .get::<_, shared::Agent>(&key)
             .map(|agent| agent.nonce)
             .unwrap_or(0)
+    }
+
+    /// Lock agent in escrow - only authorized contracts can call this
+    pub fn lock_in_escrow(env: Env, agent_id: u64, escrow_contract: Address) {
+        if agent_id == 0 {
+            panic!("Invalid agent ID: must be greater than 0");
+        }
+
+        let key = String::from_str(&env, AGENT_KEY_PREFIX);
+        let mut agent: shared::Agent = env.storage()
+            .instance()
+            .get(&key)
+            .expect("Agent not found");
+
+        // Check if already locked
+        if agent.escrow_locked {
+            panic!("Agent is already locked in escrow");
+        }
+
+        // Lock the agent
+        agent.escrow_locked = true;
+        agent.escrow_holder = Some(escrow_contract.clone());
+        agent.updated_at = env.ledger().timestamp();
+
+        env.storage().instance().set(&key, &agent);
+        
+        env.events().publish(
+            (Symbol::new(&env, "agent_escrow_locked"),),
+            (agent_id, agent.owner, escrow_contract)
+        );
+    }
+
+    /// Release agent from escrow - only the escrow contract can call this
+    pub fn release_from_escrow(env: Env, agent_id: u64, new_owner: Address, escrow_contract: Address) {
+        if agent_id == 0 {
+            panic!("Invalid agent ID: must be greater than 0");
+        }
+
+        let key = String::from_str(&env, AGENT_KEY_PREFIX);
+        let mut agent: shared::Agent = env.storage()
+            .instance()
+            .get(&key)
+            .expect("Agent not found");
+
+        // Verify caller is the escrow contract that locked the agent
+        if !agent.escrow_locked {
+            panic!("Agent is not locked in escrow");
+        }
+        
+        match &agent.escrow_holder {
+            Some(holder) => {
+                if holder != &escrow_contract {
+                    panic!("Unauthorized: only the escrow contract can release the agent");
+                }
+            }
+            None => panic!("Agent escrow holder not set"),
+        }
+
+        // Release and transfer ownership
+        agent.escrow_locked = false;
+        agent.escrow_holder = None;
+        agent.owner = new_owner.clone();
+        agent.updated_at = env.ledger().timestamp();
+        agent.nonce = agent.nonce.checked_add(1).expect("Nonce overflow");
+
+        env.storage().instance().set(&key, &agent);
+        
+        env.events().publish(
+            (Symbol::new(&env, "agent_escrow_released"),),
+            (agent_id, new_owner, escrow_contract)
+        );
+    }
+
+    /// Check if agent is locked in escrow
+    pub fn is_escrow_locked(env: Env, agent_id: u64) -> bool {
+        if agent_id == 0 {
+            panic!("Invalid agent ID: must be greater than 0");
+        }
+
+        let key = String::from_str(&env, AGENT_KEY_PREFIX);
+        let agent: shared::Agent = env.storage()
+            .instance()
+            .get(&key)
+            .expect("Agent not found");
+        
+        agent.escrow_locked
+    }
+
+    /// Get escrow holder for an agent
+    pub fn get_escrow_holder(env: Env, agent_id: u64) -> Option<Address> {
+        if agent_id == 0 {
+            panic!("Invalid agent ID: must be greater than 0");
+        }
+
+        let key = String::from_str(&env, AGENT_KEY_PREFIX);
+        let agent: shared::Agent = env.storage()
+            .instance()
+            .get(&key)
+            .expect("Agent not found");
+        
+        agent.escrow_holder
     }
 }
 
