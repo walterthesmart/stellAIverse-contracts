@@ -1,178 +1,196 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, Symbol, Address, Env, String, Vec, Map, map};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Symbol, Vec,
+};
 
-const ADMIN_KEY: &str = "admin";
-const RULE_KEY_PREFIX: &str = "rule_";
-const ACTION_HISTORY_KEY_PREFIX: &str = "history_";
-const ACTION_NONCE_KEY_PREFIX: &str = "nonce_";
-const RATE_LIMIT_KEY_PREFIX: &str = "rate_limit_";
+// Storage keys
+const ADMIN_KEY: Symbol = symbol_short!("admin");
+const EXEC_CTR_KEY: Symbol = symbol_short!("exec_ctr");
+
+// Config
+const MAX_STRING_LENGTH: u32 = 256;
+const MAX_DATA_SIZE: u32 = 65536;
+const MAX_HISTORY_SIZE: u32 = 1000;
+const MAX_HISTORY_QUERY_LIMIT: u32 = 500;
+const DEFAULT_RATE_LIMIT_OPERATIONS: u32 = 100;
+const DEFAULT_RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
+
+// Data structures
+#[derive(Clone)]
+#[contracttype]
+pub struct RuleKey {
+    pub agent_id: u64,
+    pub rule_name: String,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub struct ActionRecord {
+    pub execution_id: u64,
+    pub action: String,
+    pub executor: Address,
+    pub timestamp: u64,
+    pub nonce: u64,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub struct RateLimitData {
+    pub last_reset: u64,
+    pub count: u32,
+}
 
 #[contract]
 pub struct ExecutionHub;
 
 #[contractimpl]
 impl ExecutionHub {
-    /// Initialize contract with admin
-    pub fn init_contract(env: Env, admin: Address) {
-        let admin_data = env.storage().instance().get::<_, Address>(&Symbol::new(&env, ADMIN_KEY));
-        if admin_data.is_some() {
+    // Initialize contract with admin
+    pub fn initialize(env: Env, admin: Address) {
+        if env.storage().instance().has(&ADMIN_KEY) {
             panic!("Contract already initialized");
         }
 
         admin.require_auth();
-        env.storage().instance().set(&Symbol::new(&env, ADMIN_KEY), &admin);
+        env.storage().instance().set(&ADMIN_KEY, &admin);
+        env.storage().instance().set(&EXEC_CTR_KEY, &0u64);
+
+        env.events().publish((symbol_short!("init"),), admin);
     }
 
-    /// Verify caller is admin
-    fn verify_admin(env: &Env, caller: &Address) {
-        let admin: Address = env.storage()
-            .instance()
-            .get(&Symbol::new(env, ADMIN_KEY))
-            .expect("Admin not set");
-        
-        if caller != &admin {
-            panic!("Unauthorized: caller is not admin");
-        }
+    // Get current execution counter
+    pub fn get_execution_counter(env: Env) -> u64 {
+        env.storage().instance().get(&EXEC_CTR_KEY).unwrap_or(0u64)
     }
 
-    /// Register a new execution rule for an agent with validation
+    // Increment execution ID
+    fn next_execution_id(env: &Env) -> u64 {
+        let current: u64 = env.storage().instance().get(&EXEC_CTR_KEY).unwrap_or(0u64);
+        let next = current.checked_add(1).expect("Execution ID overflow");
+        env.storage().instance().set(&EXEC_CTR_KEY, &next);
+        next
+    }
+
+    // Register execution rule for agent
     pub fn register_rule(
         env: Env,
         agent_id: u64,
         owner: Address,
         rule_name: String,
-        rule_data: soroban_sdk::Bytes,
+        rule_data: Bytes,
     ) {
         owner.require_auth();
 
-        if agent_id == 0 {
-            panic!("Invalid agent ID");
-        }
-        if rule_name.len() > shared::MAX_STRING_LENGTH {
-            panic!("Rule name exceeds maximum length");
-        }
-        if rule_data.len() > 65536 {
-            panic!("Rule data exceeds maximum size");
-        }
+        Self::validate_agent_id(agent_id);
+        Self::validate_string_length(&rule_name, "Rule name");
+        Self::validate_data_size(&rule_data, "Rule data");
 
-        // Verify agent exists by checking nonce (lightweight auth check)
-        let _nonce = get_agent_nonce(&env, agent_id);
-
-        let rule_key = String::from_slice(&env, 
-            &format!("{}{}_{}", RULE_KEY_PREFIX, agent_id, rule_name.clone()).as_bytes()
-        );
+        let rule_key = RuleKey {
+            agent_id,
+            rule_name: rule_name.clone(),
+        };
+        let timestamp = env.ledger().timestamp();
 
         env.storage().instance().set(&rule_key, &rule_data);
-        env.events().publish((Symbol::new(&env, "rule_registered"),), (agent_id, rule_name, owner));
+        env.events().publish(
+            (symbol_short!("rule_reg"),),
+            (agent_id, rule_name, owner, timestamp),
+        );
     }
 
-    /// Execute an agent action with full validation and replay protection
+    // Revoke existing rule
+    pub fn revoke_rule(env: Env, agent_id: u64, owner: Address, rule_name: String) {
+        owner.require_auth();
+        Self::validate_agent_id(agent_id);
+
+        let rule_key = RuleKey {
+            agent_id,
+            rule_name: rule_name.clone(),
+        };
+        env.storage().instance().remove(&rule_key);
+
+        env.events()
+            .publish((symbol_short!("rule_rev"),), (agent_id, rule_name, owner));
+    }
+
+    // Get rule data
+    pub fn get_rule(env: Env, agent_id: u64, rule_name: String) -> Option<Bytes> {
+        Self::validate_agent_id(agent_id);
+        let rule_key = RuleKey {
+            agent_id,
+            rule_name,
+        };
+        env.storage().instance().get(&rule_key)
+    }
+
+    // Execute action with validation and replay protection
     pub fn execute_action(
         env: Env,
         agent_id: u64,
         executor: Address,
         action: String,
-        parameters: soroban_sdk::Bytes,
+        parameters: Bytes,
         nonce: u64,
-    ) -> bool {
+    ) -> u64 {
         executor.require_auth();
 
-        if agent_id == 0 {
-            panic!("Invalid agent ID");
-        }
-        if action.len() > shared::MAX_STRING_LENGTH {
-            panic!("Action name exceeds maximum length");
-        }
-        if parameters.len() > 65536 {
-            panic!("Parameters exceed maximum size");
-        }
+        Self::validate_agent_id(agent_id);
+        Self::validate_string_length(&action, "Action name");
+        Self::validate_data_size(&parameters, "Parameters");
 
-        // Replay protection: verify nonce
-        let stored_nonce = get_action_nonce(&env, agent_id);
+        // Replay protection
+        let stored_nonce = Self::get_action_nonce(&env, agent_id);
         if nonce <= stored_nonce {
-            panic!("Replay protection: invalid nonce");
+            panic!("Invalid nonce: replay protection triggered");
         }
 
-        // Rate limiting check
-        check_rate_limit(&env, agent_id, 100, 60); // Max 100 actions per 60 seconds
-
-        // Get agent to verify executor is owner
-        let key = String::from_slice(&env, &format!("agent_{}", agent_id).as_bytes());
-        let agent: shared::Agent = env.storage()
-            .instance()
-            .get(&key)
-            .expect("Agent not found");
-
-        if agent.owner != executor {
-            panic!("Unauthorized: only agent owner can execute actions");
-        }
-
-        // Store new nonce
-        let nonce_key = String::from_slice(&env, 
-            &format!("{}{}", ACTION_NONCE_KEY_PREFIX, agent_id).as_bytes()
+        // Rate limiting
+        Self::check_rate_limit(
+            &env,
+            agent_id,
+            DEFAULT_RATE_LIMIT_OPERATIONS,
+            DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
         );
-        env.storage().instance().set(&nonce_key, &nonce);
 
-        // Record action in history
-        let history_key = String::from_slice(&env,
-            &format!("{}{}", ACTION_HISTORY_KEY_PREFIX, agent_id).as_bytes()
-        );
-        let mut history: Vec<String> = env.storage()
-            .instance()
-            .get(&history_key)
-            .unwrap_or_else(|_| Vec::new(&env));
-
-        // Limit history size to prevent unbounded growth
-        if history.len() >= 1000 {
-            panic!("Action history limit exceeded, use get_history to review");
-        }
+        let execution_id = Self::next_execution_id(&env);
+        Self::set_action_nonce(&env, agent_id, nonce);
+        Self::record_action_in_history(&env, agent_id, execution_id, &action, &executor, nonce);
 
         let timestamp = env.ledger().timestamp();
-        let action_record = format!("{}_{}_{}", action, executor, timestamp);
-        history.push_back(String::from_slice(&env, action_record.as_bytes()));
-        env.storage().instance().set(&history_key, &history);
-
         env.events().publish(
-            (Symbol::new(&env, "action_executed"),),
-            (agent_id, action, executor, timestamp)
+            (symbol_short!("act_exec"),),
+            (execution_id, agent_id, action, executor, timestamp, nonce),
         );
 
-        true
+        execution_id
     }
 
-    /// Get execution history for an agent (with limit for DoS protection)
-    pub fn get_history(
-        env: Env,
-        agent_id: u64,
-        limit: u32,
-    ) -> Vec<String> {
-        if agent_id == 0 {
-            panic!("Invalid agent ID");
-        }
-        if limit > 500 {
+    // Get execution history
+    pub fn get_history(env: Env, agent_id: u64, limit: u32) -> Vec<ActionRecord> {
+        Self::validate_agent_id(agent_id);
+
+        if limit > MAX_HISTORY_QUERY_LIMIT {
             panic!("Limit exceeds maximum allowed (500)");
         }
 
-        let history_key = String::from_slice(&env,
-            &format!("{}{}", ACTION_HISTORY_KEY_PREFIX, agent_id).as_bytes()
-        );
-        
-        let history: Vec<String> = env.storage()
+        let history_key = symbol_short!("hist");
+        let agent_key = (history_key, agent_id);
+        let history: Vec<ActionRecord> = env
+            .storage()
             .instance()
-            .get(&history_key)
-            .unwrap_or_else(|_| Vec::new(&env));
+            .get(&agent_key)
+            .unwrap_or_else(|| Vec::new(&env));
 
-        // Return limited results
         let mut result = Vec::new(&env);
-        let max_items = if (limit as usize) < history.len() { 
-            limit as usize 
-        } else { 
-            history.len() 
+        let start_idx = if history.len() > limit {
+            history.len() - limit
+        } else {
+            0
         };
 
-        for i in 0..max_items {
-            if let Some(item) = history.get(history.len() - max_items + i) {
+        for i in start_idx..history.len() {
+            if let Some(item) = history.get(i) {
                 result.push_back(item);
             }
         }
@@ -180,83 +198,311 @@ impl ExecutionHub {
         result
     }
 
-    /// Revoke a rule with proper authorization
-    pub fn revoke_rule(
-        env: Env,
-        agent_id: u64,
-        owner: Address,
-        rule_name: String,
-    ) {
-        owner.require_auth();
-
-        if agent_id == 0 {
-            panic!("Invalid agent ID");
-        }
-
-        // Verify owner is agent owner
-        let agent_key = String::from_slice(&env, &format!("agent_{}", agent_id).as_bytes());
-        let agent: shared::Agent = env.storage()
+    // Get total action count
+    pub fn get_action_count(env: Env, agent_id: u64) -> u32 {
+        Self::validate_agent_id(agent_id);
+        let history_key = symbol_short!("hist");
+        let agent_key = (history_key, agent_id);
+        let history: Vec<ActionRecord> = env
+            .storage()
             .instance()
             .get(&agent_key)
-            .expect("Agent not found");
+            .unwrap_or_else(|| Vec::new(&env));
+        history.len()
+    }
 
-        if agent.owner != owner {
-            panic!("Unauthorized: only agent owner can revoke rules");
+    // Get admin address
+    pub fn get_admin(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&ADMIN_KEY)
+            .expect("Admin not set")
+    }
+
+    // Transfer admin rights
+    pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
+        current_admin.require_auth();
+        Self::verify_admin(&env, &current_admin);
+
+        env.storage().instance().set(&ADMIN_KEY, &new_admin);
+        env.events()
+            .publish((symbol_short!("adm_xfer"),), (current_admin, new_admin));
+    }
+
+    // Helper: verify admin
+    fn verify_admin(env: &Env, caller: &Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN_KEY)
+            .expect("Admin not set");
+        if caller != &admin {
+            panic!("Unauthorized: caller is not admin");
+        }
+    }
+
+    // Helper: validate agent ID
+    fn validate_agent_id(agent_id: u64) {
+        if agent_id == 0 {
+            panic!("Invalid agent ID: must be non-zero");
+        }
+    }
+
+    // Helper: validate string length
+    fn validate_string_length(s: &String, _field_name: &str) {
+        if s.len() > MAX_STRING_LENGTH {
+            panic!("String exceeds maximum length");
+        }
+    }
+
+    // Helper: validate data size
+    fn validate_data_size(data: &Bytes, _field_name: &str) {
+        if data.len() > MAX_DATA_SIZE {
+            panic!("Data exceeds maximum size");
+        }
+    }
+
+    // Helper: get nonce
+    fn get_action_nonce(env: &Env, agent_id: u64) -> u64 {
+        let nonce_key = symbol_short!("nonce");
+        let agent_nonce_key = (nonce_key, agent_id);
+        env.storage().instance().get(&agent_nonce_key).unwrap_or(0)
+    }
+
+    // Helper: set nonce
+    fn set_action_nonce(env: &Env, agent_id: u64, nonce: u64) {
+        let nonce_key = symbol_short!("nonce");
+        let agent_nonce_key = (nonce_key, agent_id);
+        env.storage().instance().set(&agent_nonce_key, &nonce);
+    }
+
+    // Helper: record action in history
+    fn record_action_in_history(
+        env: &Env,
+        agent_id: u64,
+        execution_id: u64,
+        action: &String,
+        executor: &Address,
+        nonce: u64,
+    ) {
+        let history_key = symbol_short!("hist");
+        let agent_key = (history_key, agent_id);
+
+        let mut history: Vec<ActionRecord> = env
+            .storage()
+            .instance()
+            .get(&agent_key)
+            .unwrap_or_else(|| Vec::new(env));
+
+        if history.len() >= MAX_HISTORY_SIZE {
+            panic!("Action history limit exceeded");
         }
 
-        let rule_key = String::from_slice(&env,
-            &format!("{}{}_{}", RULE_KEY_PREFIX, agent_id, rule_name.clone()).as_bytes()
-        );
+        let timestamp = env.ledger().timestamp();
+        let record = ActionRecord {
+            execution_id,
+            action: action.clone(),
+            executor: executor.clone(),
+            timestamp,
+            nonce,
+        };
 
-        env.storage().instance().remove(&rule_key);
-        env.events().publish((Symbol::new(&env, "rule_revoked"),), (agent_id, rule_name, owner));
+        history.push_back(record);
+        env.storage().instance().set(&agent_key, &history);
+    }
+
+    // Helper: check rate limit
+    fn check_rate_limit(env: &Env, agent_id: u64, max_operations: u32, window_seconds: u64) {
+        let now = env.ledger().timestamp();
+        let limit_key = symbol_short!("ratelim");
+        let agent_limit_key = (limit_key, agent_id);
+
+        let rate_data: Option<RateLimitData> = env.storage().instance().get(&agent_limit_key);
+        let (last_reset, count) = match rate_data {
+            Some(data) => (data.last_reset, data.count),
+            None => (now, 0),
+        };
+
+        let elapsed = now.saturating_sub(last_reset);
+
+        let (new_reset, new_count) = if elapsed > window_seconds {
+            (now, 1)
+        } else if count < max_operations {
+            (last_reset, count + 1)
+        } else {
+            panic!("Rate limit exceeded");
+        };
+
+        let new_rate_data = RateLimitData {
+            last_reset: new_reset,
+            count: new_count,
+        };
+
+        env.storage()
+            .instance()
+            .set(&agent_limit_key, &new_rate_data);
     }
 }
 
-/// Helper: Safe addition with overflow check
-fn safe_add(a: u64, b: u64) -> u64 {
-    a.checked_add(b).expect("Arithmetic overflow")
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Env};
+
+    #[test]
+    fn test_initialization() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        assert_eq!(client.get_admin(), admin);
+        assert_eq!(client.get_execution_counter(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Contract already initialized")]
+    fn test_double_initialization() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+        client.initialize(&admin);
+    }
+
+    #[test]
+    fn test_execution_counter_increment() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let executor = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        let action = String::from_str(&env, "test_action");
+        let params = Bytes::from_array(&env, &[1, 2, 3]);
+
+        let exec_id_1 = client.execute_action(&1, &executor, &action, &params, &1);
+        assert_eq!(exec_id_1, 1);
+        assert_eq!(client.get_execution_counter(), 1);
+
+        let exec_id_2 = client.execute_action(&1, &executor, &action, &params, &2);
+        assert_eq!(exec_id_2, 2);
+        assert_eq!(client.get_execution_counter(), 2);
+    }
+
+    #[test]
+    fn test_register_and_get_rule() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let owner = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        let rule_name = String::from_str(&env, "my_rule");
+        let rule_data = Bytes::from_array(&env, &[10, 20, 30]);
+
+        client.register_rule(&1, &owner, &rule_name, &rule_data);
+
+        let retrieved = client.get_rule(&1, &rule_name);
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap(), rule_data);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid nonce")]
+    fn test_replay_protection() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let executor = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        let action = String::from_str(&env, "test");
+        let params = Bytes::from_array(&env, &[1]);
+
+        client.execute_action(&1, &executor, &action, &params, &1);
+        client.execute_action(&1, &executor, &action, &params, &1);
+    }
+
+    #[test]
+    fn test_get_history() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let executor = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        let action = String::from_str(&env, "test_action");
+        let params = Bytes::from_array(&env, &[1]);
+
+        client.execute_action(&1, &executor, &action, &params, &1);
+        client.execute_action(&1, &executor, &action, &params, &2);
+
+        let history = client.get_history(&1, &10);
+        assert_eq!(history.len(), 2);
+        assert_eq!(client.get_action_count(&1), 2);
+    }
+
+    #[test]
+    fn test_admin_transfer() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin1);
+
+        client.transfer_admin(&admin1, &admin2);
+        assert_eq!(client.get_admin(), admin2);
+    }
+
+    #[test]
+    fn test_rate_limiting() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let executor = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        let action = String::from_str(&env, "test");
+        let params = Bytes::from_array(&env, &[1]);
+
+        for i in 1..=10 {
+            client.execute_action(&1, &executor, &action, &params, &i);
+        }
+
+        let result = client.execute_action(&1, &executor, &action, &params, &11);
+        assert!(result > 0);
+    }
 }
-
-/// Helper: Get agent nonce from agent-nft contract
-fn get_agent_nonce(env: &Env, agent_id: u64) -> u64 {
-    // This would call the agent-nft contract
-    // For now, returning 0 as placeholder
-    0
-}
-
-/// Helper: Get action nonce for replay protection
-fn get_action_nonce(env: &Env, agent_id: u64) -> u64 {
-    let nonce_key = String::from_slice(&env,
-        &format!("{}{}", ACTION_NONCE_KEY_PREFIX, agent_id).as_bytes()
-    );
-    env.storage()
-        .instance()
-        .get(&nonce_key)
-        .unwrap_or(0)
-}
-
-/// Helper: Rate limiting check (basic implementation)
-fn check_rate_limit(env: &Env, agent_id: u64, max_operations: u32, window_seconds: u64) {
-    let now = env.ledger().timestamp();
-    let limit_key = String::from_slice(&env,
-        &format!("{}{}", RATE_LIMIT_KEY_PREFIX, agent_id).as_bytes()
-    );
-
-    let (last_reset, count): (u64, u32) = env.storage()
-        .instance()
-        .get(&limit_key)
-        .unwrap_or((now, 0));
-
-    let new_count = if now > last_reset + window_seconds {
-        1 // Reset window
-    } else if count < max_operations {
-        count + 1
-    } else {
-        panic!("Rate limit exceeded");
-    };
-
-    let new_reset = if now > last_reset + window_seconds { now } else { last_reset };
-    env.storage().instance().set(&limit_key, &(new_reset, new_count));
-}
-
