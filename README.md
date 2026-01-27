@@ -25,8 +25,24 @@ Table of contents
 - Contributing
 - Roadmap & TODOs
 - License & contact
+- Project Structure
 
-Overview
+## Project Structure
+
+```
+stellAIverse-contracts/
+├── contracts/
+│   ├── agent-nft/       # Agent NFT contract (minting, metadata)
+│   ├── evolution/       # Evolution manager (staking, upgrades)
+│   ├── execution-hub/   # Execution hub (action recording, rules)
+│   ├── faucet/          # Testnet faucet
+│   ├── marketplace/     # Marketplace (trading, leasing)
+│   └── oracle/          # Oracle bridge (data feed, attestations)
+├── shared/              # Shared libraries (types, errors, constants)
+└── tests/               # Integration tests (TODO)
+```
+
+## Overview
 StellAIverse tokenizes AI Agents so they can be owned, traded, leased, and upgraded on Stellar (Soroban). Agents are represented as NFTs or custom assets with structured metadata (model hashes, capabilities, evolution level). Off-chain compute (AI training, inference) is coordinated with on-chain state through secure attestations / oracles.
 
 Key contracts & responsibilities

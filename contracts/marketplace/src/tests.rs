@@ -1,7 +1,7 @@
 #![cfg(test)]
 
-use soroban_sdk::{Address, Env, String, Vec};
 use crate::Marketplace;
+use soroban_sdk::{Address, Env, String, Vec};
 
 #[test]
 fn test_basic_functionality() {
@@ -25,10 +25,13 @@ fn test_basic_functionality() {
         owner: seller.clone(),
         name: String::from_str(&env, "Test Agent"),
         model_hash: String::from_str(&env, "hash123"),
-        capabilities: Vec::from_array(&env, [
-            String::from_str(&env, "capability1"),
-            String::from_str(&env, "capability2")
-        ]),
+        capabilities: Vec::from_array(
+            &env,
+            [
+                String::from_str(&env, "capability1"),
+                String::from_str(&env, "capability2"),
+            ],
+        ),
         evolution_level: 0,
         created_at: env.ledger().timestamp(),
         updated_at: env.ledger().timestamp(),
@@ -47,7 +50,7 @@ fn test_basic_functionality() {
         env.clone(),
         agent_id,
         seller.clone(),
-        0, // Sale type
+        0,    // Sale type
         1000, // Price
         None, // No duration for sale
     );
@@ -56,21 +59,18 @@ fn test_basic_functionality() {
     assert!(listing_id > 0);
 
     // Verify agent is now locked in escrow
-    let updated_agent: shared::Agent = env.storage()
-        .instance()
-        .get(&agent_key_str)
-        .unwrap();
+    let updated_agent: shared::Agent = env.storage().instance().get(&agent_key_str).unwrap();
     assert!(updated_agent.escrow_locked);
-    assert_eq!(updated_agent.escrow_holder, Some(marketplace_address.clone()));
+    assert_eq!(
+        updated_agent.escrow_holder,
+        Some(marketplace_address.clone())
+    );
 
     // Cancel listing (should release agent from escrow)
     Marketplace::cancel_listing(env.clone(), listing_id, seller.clone());
 
     // Verify agent is released from escrow
-    let final_agent: shared::Agent = env.storage()
-        .instance()
-        .get(&agent_key_str)
-        .unwrap();
+    let final_agent: shared::Agent = env.storage().instance().get(&agent_key_str).unwrap();
     assert!(!final_agent.escrow_locked);
     assert_eq!(final_agent.escrow_holder, None);
 }
@@ -112,7 +112,7 @@ fn test_ownership_validation() {
         env.clone(),
         agent_id,
         owner.clone(),
-        0, // Sale type
+        0,    // Sale type
         1000, // Price
         None, // No duration
     );

@@ -1,8 +1,8 @@
 #![cfg(test)]
 extern crate std;
 
-use soroban_sdk::{Address, Env, String, Bytes, Symbol};
 use crate::Evolution;
+use soroban_sdk::{Address, Bytes, Env, String, Symbol};
 
 struct TestSetup {
     env: Env,
@@ -39,9 +39,10 @@ impl TestSetup {
             owner: self.owner.clone(),
             name: String::from_str(&self.env, "TestAgent"),
             model_hash: String::from_str(&self.env, "original_hash"),
-            capabilities: soroban_sdk::Vec::from_array(&self.env, [
-                String::from_str(&self.env, "execute"),
-            ]),
+            capabilities: soroban_sdk::Vec::from_array(
+                &self.env,
+                [String::from_str(&self.env, "execute")],
+            ),
             evolution_level: 0,
             created_at: self.env.ledger().timestamp(),
             updated_at: self.env.ledger().timestamp(),
@@ -59,7 +60,12 @@ impl TestSetup {
         self.create_evolution_request_with_stake(request_id, agent_id, 1000)
     }
 
-    fn create_evolution_request_with_stake(&self, request_id: u64, agent_id: u64, stake_amount: i128) -> shared::EvolutionRequest {
+    fn create_evolution_request_with_stake(
+        &self,
+        request_id: u64,
+        agent_id: u64,
+        stake_amount: i128,
+    ) -> shared::EvolutionRequest {
         let request = shared::EvolutionRequest {
             request_id,
             agent_id,
@@ -75,7 +81,12 @@ impl TestSetup {
         request
     }
 
-    fn create_attestation(&self, request_id: u64, agent_id: u64, nonce: u64) -> shared::EvolutionAttestation {
+    fn create_attestation(
+        &self,
+        request_id: u64,
+        agent_id: u64,
+        nonce: u64,
+    ) -> shared::EvolutionAttestation {
         shared::EvolutionAttestation {
             request_id,
             agent_id,
@@ -141,7 +152,7 @@ fn test_set_evolution_params_rejects_zero_min_stake() {
     Evolution::set_evolution_params(
         setup.env.clone(),
         setup.admin.clone(),
-        0,    // Invalid: zero min stake
+        0, // Invalid: zero min stake
         3600,
     );
 }
@@ -215,12 +226,7 @@ fn test_complete_upgrade_updates_agent_and_request() {
     setup.create_evolution_request(1, 1);
 
     let new_hash = String::from_str(&setup.env, "new_model_v2");
-    Evolution::complete_upgrade(
-        setup.env.clone(),
-        setup.admin.clone(),
-        1,
-        new_hash.clone(),
-    );
+    Evolution::complete_upgrade(setup.env.clone(), setup.admin.clone(), 1, new_hash.clone());
 
     // Verify agent was updated
     let agent_key = String::from_str(&setup.env, "agent_1");
@@ -244,12 +250,7 @@ fn test_complete_upgrade_rejects_non_admin() {
     let non_admin = Address::generate(&setup.env);
     let new_hash = String::from_str(&setup.env, "new_model_v2");
 
-    Evolution::complete_upgrade(
-        setup.env.clone(),
-        non_admin,
-        1,
-        new_hash,
-    );
+    Evolution::complete_upgrade(setup.env.clone(), non_admin, 1, new_hash);
 }
 
 #[test]
@@ -266,12 +267,7 @@ fn test_complete_upgrade_rejects_already_completed() {
 
     let new_hash = String::from_str(&setup.env, "new_model_v2");
 
-    Evolution::complete_upgrade(
-        setup.env.clone(),
-        setup.admin.clone(),
-        1,
-        new_hash,
-    );
+    Evolution::complete_upgrade(setup.env.clone(), setup.admin.clone(), 1, new_hash);
 }
 
 // ============================================
@@ -293,7 +289,10 @@ fn test_valid_attestation_updates_agent() {
     let agent_key = String::from_str(env, "agent_1");
     let initial_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
     assert_eq!(initial_agent.evolution_level, 0);
-    assert_eq!(initial_agent.model_hash, String::from_str(env, "original_hash"));
+    assert_eq!(
+        initial_agent.model_hash,
+        String::from_str(env, "original_hash")
+    );
 
     // Apply valid attestation
     let attestation = setup.create_attestation(request_id, agent_id, 1);
@@ -302,12 +301,16 @@ fn test_valid_attestation_updates_agent() {
     // Verify agent was updated
     let updated_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
     assert_eq!(updated_agent.evolution_level, 1);
-    assert_eq!(updated_agent.model_hash, String::from_str(env, "upgraded_hash_v1"));
+    assert_eq!(
+        updated_agent.model_hash,
+        String::from_str(env, "upgraded_hash_v1")
+    );
     assert_eq!(updated_agent.nonce, 1);
 
     // Verify request status changed
     let request_key = String::from_str(env, "request_1");
-    let updated_request: shared::EvolutionRequest = env.storage().instance().get(&request_key).unwrap();
+    let updated_request: shared::EvolutionRequest =
+        env.storage().instance().get(&request_key).unwrap();
     assert_eq!(updated_request.status, shared::EvolutionStatus::Completed);
     assert!(updated_request.completed_at.is_some());
 }

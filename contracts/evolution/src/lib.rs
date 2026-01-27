@@ -21,26 +21,35 @@ pub struct Evolution;
 impl Evolution {
     /// Initialize contract with admin and stake token
     pub fn init_contract(env: Env, admin: Address, stake_token: Address) {
-        let admin_data = env.storage().instance().get::<_, Address>(&Symbol::new(&env, ADMIN_KEY));
+        let admin_data = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&Symbol::new(&env, ADMIN_KEY));
         if admin_data.is_some() {
             panic!("Contract already initialized");
         }
 
         admin.require_auth();
-        env.storage().instance().set(&Symbol::new(&env, ADMIN_KEY), &admin);
-        env.storage().instance().set(&Symbol::new(&env, REQUEST_COUNTER_KEY), &0u64);
-        env.storage().instance().set(&Symbol::new(&env, STAKE_TOKEN_KEY), &stake_token);
-        env.storage().instance().set(&Symbol::new(&env, MIN_STAKE_KEY), &DEFAULT_MIN_STAKE);
-        env.storage().instance().set(&Symbol::new(&env, COOLDOWN_SECONDS_KEY), &DEFAULT_COOLDOWN_SECONDS);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, ADMIN_KEY), &admin);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, REQUEST_COUNTER_KEY), &0u64);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, STAKE_TOKEN_KEY), &stake_token);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, MIN_STAKE_KEY), &DEFAULT_MIN_STAKE);
+        env.storage().instance().set(
+            &Symbol::new(&env, COOLDOWN_SECONDS_KEY),
+            &DEFAULT_COOLDOWN_SECONDS,
+        );
     }
 
     /// Set evolution parameters (admin only)
-    pub fn set_evolution_params(
-        env: Env,
-        admin: Address,
-        min_stake: i128,
-        cooldown_seconds: u64,
-    ) {
+    pub fn set_evolution_params(env: Env, admin: Address, min_stake: i128, cooldown_seconds: u64) {
         admin.require_auth();
         Self::verify_admin(&env, &admin);
 
@@ -54,22 +63,28 @@ impl Evolution {
             panic!("Cooldown exceeds maximum allowed duration");
         }
 
-        env.storage().instance().set(&Symbol::new(&env, MIN_STAKE_KEY), &min_stake);
-        env.storage().instance().set(&Symbol::new(&env, COOLDOWN_SECONDS_KEY), &cooldown_seconds);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, MIN_STAKE_KEY), &min_stake);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, COOLDOWN_SECONDS_KEY), &cooldown_seconds);
 
         env.events().publish(
             (Symbol::new(&env, "evolution_params_updated"),),
-            (min_stake, cooldown_seconds)
+            (min_stake, cooldown_seconds),
         );
     }
 
     /// Get evolution parameters
     pub fn get_evolution_params(env: Env) -> (i128, u64) {
-        let min_stake: i128 = env.storage()
+        let min_stake: i128 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, MIN_STAKE_KEY))
             .unwrap_or(DEFAULT_MIN_STAKE);
-        let cooldown: u64 = env.storage()
+        let cooldown: u64 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, COOLDOWN_SECONDS_KEY))
             .unwrap_or(DEFAULT_COOLDOWN_SECONDS);
@@ -82,7 +97,8 @@ impl Evolution {
             panic!("Invalid agent ID");
         }
 
-        let cooldown: u64 = env.storage()
+        let cooldown: u64 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, COOLDOWN_SECONDS_KEY))
             .unwrap_or(DEFAULT_COOLDOWN_SECONDS);
@@ -113,7 +129,8 @@ impl Evolution {
 
     /// Check if agent is within cooldown period
     fn is_agent_on_cooldown(env: &Env, agent_id: u64) -> bool {
-        let cooldown: u64 = env.storage()
+        let cooldown: u64 = env
+            .storage()
             .instance()
             .get(&Symbol::new(env, COOLDOWN_SECONDS_KEY))
             .unwrap_or(DEFAULT_COOLDOWN_SECONDS);
@@ -144,11 +161,12 @@ impl Evolution {
 
     /// Verify caller is admin
     fn verify_admin(env: &Env, caller: &Address) {
-        let admin: Address = env.storage()
+        let admin: Address = env
+            .storage()
             .instance()
             .get(&Symbol::new(env, ADMIN_KEY))
             .expect("Admin not set");
-        
+
         if caller != &admin {
             panic!("Unauthorized: caller is not admin");
         }
@@ -176,12 +194,7 @@ impl Evolution {
     /// * If agent is within cooldown period
     /// * If too many pending requests exist for this agent
     /// * If token transfer fails
-    pub fn request_upgrade(
-        env: Env,
-        agent_id: u64,
-        owner: Address,
-        stake_amount: i128,
-    ) -> u64 {
+    pub fn request_upgrade(env: Env, agent_id: u64, owner: Address, stake_amount: i128) -> u64 {
         owner.require_auth();
 
         // Input validation
@@ -190,7 +203,8 @@ impl Evolution {
         }
 
         // Validate stake amount against minimum
-        let min_stake: i128 = env.storage()
+        let min_stake: i128 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, MIN_STAKE_KEY))
             .unwrap_or(DEFAULT_MIN_STAKE);
@@ -204,7 +218,8 @@ impl Evolution {
 
         // Verify agent exists and caller is owner
         let agent_key = Self::build_agent_storage_key(&env, agent_id);
-        let agent: shared::Agent = env.storage()
+        let agent: shared::Agent = env
+            .storage()
             .instance()
             .get(&agent_key)
             .expect("Agent not found");
@@ -225,7 +240,8 @@ impl Evolution {
         }
 
         // Transfer stake tokens from owner to this contract
-        let stake_token: Address = env.storage()
+        let stake_token: Address = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, STAKE_TOKEN_KEY))
             .expect("Stake token not configured");
@@ -235,7 +251,8 @@ impl Evolution {
         token_client.transfer(&owner, &contract_address, &stake_amount);
 
         // Generate request ID safely
-        let counter: u64 = env.storage()
+        let counter: u64 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, REQUEST_COUNTER_KEY))
             .unwrap_or(0);
@@ -256,7 +273,9 @@ impl Evolution {
         env.storage().instance().set(&request_key, &request);
 
         // Update counter
-        env.storage().instance().set(&Symbol::new(&env, REQUEST_COUNTER_KEY), &request_id);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, REQUEST_COUNTER_KEY), &request_id);
 
         // Update agent cooldown timestamp
         Self::update_agent_cooldown(&env, agent_id);
@@ -264,7 +283,13 @@ impl Evolution {
         // Emit EvolutionRequested event
         env.events().publish(
             (Symbol::new(&env, "EvolutionRequested"),),
-            (request_id, agent_id, owner.clone(), stake_amount, env.ledger().timestamp())
+            (
+                request_id,
+                agent_id,
+                owner.clone(),
+                stake_amount,
+                env.ledger().timestamp(),
+            ),
         );
 
         request_id
@@ -295,12 +320,7 @@ impl Evolution {
     /// * If caller is not admin
     /// * If request is not pending
     /// * If agent not found
-    pub fn complete_upgrade(
-        env: Env,
-        admin: Address,
-        request_id: u64,
-        new_model_hash: String,
-    ) {
+    pub fn complete_upgrade(env: Env, admin: Address, request_id: u64, new_model_hash: String) {
         admin.require_auth();
 
         if request_id == 0 {
@@ -313,7 +333,8 @@ impl Evolution {
         Self::verify_admin(&env, &admin);
 
         let request_key = Self::build_request_storage_key(&env, request_id);
-        let mut request: shared::EvolutionRequest = env.storage()
+        let mut request: shared::EvolutionRequest = env
+            .storage()
             .instance()
             .get(&request_key)
             .expect("Upgrade request not found");
@@ -324,13 +345,16 @@ impl Evolution {
 
         // Update agent's model hash
         let agent_key = Self::build_agent_storage_key(&env, request.agent_id);
-        let mut agent: shared::Agent = env.storage()
+        let mut agent: shared::Agent = env
+            .storage()
             .instance()
             .get(&agent_key)
             .expect("Agent not found");
 
         agent.model_hash = new_model_hash;
-        agent.evolution_level = agent.evolution_level.checked_add(1)
+        agent.evolution_level = agent
+            .evolution_level
+            .checked_add(1)
             .expect("Evolution level overflow");
         agent.updated_at = env.ledger().timestamp();
         agent.nonce = agent.nonce.checked_add(1).expect("Nonce overflow");
@@ -344,7 +368,12 @@ impl Evolution {
 
         env.events().publish(
             (Symbol::new(&env, "EvolutionCompleted"),),
-            (request_id, request.agent_id, agent.evolution_level, env.ledger().timestamp())
+            (
+                request_id,
+                request.agent_id,
+                agent.evolution_level,
+                env.ledger().timestamp(),
+            ),
         );
     }
 
@@ -358,10 +387,7 @@ impl Evolution {
     }
 
     /// Get upgrade history for an agent (with limit for DoS protection)
-    pub fn get_upgrade_history(
-        env: Env,
-        agent_id: u64,
-    ) -> Vec<shared::EvolutionRequest> {
+    pub fn get_upgrade_history(env: Env, agent_id: u64) -> Vec<shared::EvolutionRequest> {
         if agent_id == 0 {
             panic!("Invalid agent ID");
         }
@@ -390,7 +416,8 @@ impl Evolution {
         }
 
         let request_key = Self::build_request_storage_key(&env, request_id);
-        let request: shared::EvolutionRequest = env.storage()
+        let request: shared::EvolutionRequest = env
+            .storage()
             .instance()
             .get(&request_key)
             .expect("Upgrade request not found");
@@ -400,7 +427,8 @@ impl Evolution {
         }
 
         if request.status != shared::EvolutionStatus::Completed
-            && request.status != shared::EvolutionStatus::Failed {
+            && request.status != shared::EvolutionStatus::Failed
+        {
             panic!("Stake not yet available for claim");
         }
 
@@ -415,7 +443,8 @@ impl Evolution {
         env.storage().instance().set(&stake_lock_key, &true);
 
         // Transfer stake tokens back to owner
-        let stake_token: Address = env.storage()
+        let stake_token: Address = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, STAKE_TOKEN_KEY))
             .expect("Stake token not configured");
@@ -426,7 +455,13 @@ impl Evolution {
 
         env.events().publish(
             (Symbol::new(&env, "StakeClaimed"),),
-            (request_id, request.agent_id, owner.clone(), request.stake_amount, env.ledger().timestamp())
+            (
+                request_id,
+                request.agent_id,
+                owner.clone(),
+                request.stake_amount,
+                env.ledger().timestamp(),
+            ),
         );
     }
 
@@ -452,10 +487,7 @@ impl Evolution {
     }
 
     /// Apply oracle attestation for evolution completion with signature verification
-    pub fn apply_attestation(
-        env: Env,
-        attestation: shared::EvolutionAttestation,
-    ) {
+    pub fn apply_attestation(env: Env, attestation: shared::EvolutionAttestation) {
         // Input validation
         if attestation.request_id == 0 {
             panic!("Invalid request ID");
@@ -484,7 +516,8 @@ impl Evolution {
 
         // Verify request exists and is in pending state
         let request_key = Self::build_request_storage_key(&env, attestation.request_id);
-        let mut request: shared::EvolutionRequest = env.storage()
+        let mut request: shared::EvolutionRequest = env
+            .storage()
             .instance()
             .get(&request_key)
             .expect("Upgrade request not found");
@@ -507,13 +540,16 @@ impl Evolution {
 
         // Update agent's evolution state
         let agent_key = Self::build_agent_storage_key(&env, attestation.agent_id);
-        let mut agent: shared::Agent = env.storage()
+        let mut agent: shared::Agent = env
+            .storage()
             .instance()
             .get(&agent_key)
             .expect("Agent not found");
 
         agent.model_hash = attestation.new_model_hash.clone();
-        agent.evolution_level = agent.evolution_level.checked_add(1)
+        agent.evolution_level = agent
+            .evolution_level
+            .checked_add(1)
             .expect("Evolution level overflow");
         agent.updated_at = env.ledger().timestamp();
         agent.nonce = agent.nonce.checked_add(1).expect("Nonce overflow");
@@ -537,7 +573,7 @@ impl Evolution {
                 agent.evolution_level,
                 attestation.oracle_provider,
                 env.ledger().timestamp(),
-            )
+            ),
         );
     }
 
@@ -561,4 +597,3 @@ fn count_pending_requests(_env: &Env, _agent_id: u64) -> u32 {
 // Note: May require specific soroban-sdk version compatibility
 #[cfg(all(test, feature = "testutils"))]
 mod attestation_tests;
-

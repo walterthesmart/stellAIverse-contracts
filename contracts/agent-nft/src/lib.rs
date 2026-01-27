@@ -1,8 +1,9 @@
-
 #![no_std]
 extern crate alloc;
 use alloc::format;
-use soroban_sdk::{contract, contractimpl, contracterror, contracttype, Symbol, Address, String, Env, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Env, String, Symbol, Vec,
+};
 
 const ADMIN_KEY: &str = "admin";
 const AGENT_COUNTER_KEY: &str = "agent_counter";
@@ -72,34 +73,50 @@ impl AgentNFT {
     /// Initialize contract with admin (one-time setup)
     pub fn init_contract(env: Env, admin: Address) -> Result<(), ContractError> {
         // Security: Verify this is first initialization
-        let admin_data = env.storage().instance().get::<_, Address>(&Symbol::new(&env, ADMIN_KEY));
+        let admin_data = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&Symbol::new(&env, ADMIN_KEY));
         if admin_data.is_some() {
             return Err(ContractError::AlreadyInitialized);
         }
 
         admin.require_auth();
-        env.storage().instance().set(&Symbol::new(&env, ADMIN_KEY), &admin);
-        env.storage().instance().set(&Symbol::new(&env, AGENT_COUNTER_KEY), &0u64);
-        
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, ADMIN_KEY), &admin);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, AGENT_COUNTER_KEY), &0u64);
+
         // Initialize approved minters list (empty by default)
         let approved_minters: Vec<Address> = Vec::new(&env);
-        env.storage().instance().set(&Symbol::new(&env, APPROVED_MINTERS_KEY), &approved_minters);
-        
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, APPROVED_MINTERS_KEY), &approved_minters);
+
         Ok(())
     }
 
     /// Add an approved minter (admin only)
-    pub fn add_approved_minter(env: Env, admin: Address, minter: Address) -> Result<(), ContractError> {
+    pub fn add_approved_minter(
+        env: Env,
+        admin: Address,
+        minter: Address,
+    ) -> Result<(), ContractError> {
         admin.require_auth();
         Self::verify_admin(&env, &admin)?;
 
-        let mut approved_minters: Vec<Address> = env.storage()
+        let mut approved_minters: Vec<Address> = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, APPROVED_MINTERS_KEY))
             .unwrap_or_else(|| Vec::new(&env));
 
         approved_minters.push_back(minter);
-        env.storage().instance().set(&Symbol::new(&env, APPROVED_MINTERS_KEY), &approved_minters);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, APPROVED_MINTERS_KEY), &approved_minters);
 
         Ok(())
     }
@@ -116,11 +133,12 @@ impl AgentNFT {
 
     /// Verify caller is admin
     fn verify_admin(env: &Env, caller: &Address) -> Result<(), ContractError> {
-        let admin: Address = env.storage()
+        let admin: Address = env
+            .storage()
             .instance()
             .get(&Symbol::new(env, ADMIN_KEY))
             .ok_or(ContractError::Unauthorized)?;
-        
+
         if caller != &admin {
             return Err(ContractError::Unauthorized);
         }
@@ -130,14 +148,19 @@ impl AgentNFT {
     /// Verify caller is admin or approved minter
     fn verify_minter(env: &Env, caller: &Address) -> Result<(), ContractError> {
         // Check if admin
-        if let Some(admin) = env.storage().instance().get::<_, Address>(&Symbol::new(env, ADMIN_KEY)) {
+        if let Some(admin) = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&Symbol::new(env, ADMIN_KEY))
+        {
             if caller == &admin {
                 return Ok(());
             }
         }
 
         // Check if approved minter
-        let approved_minters: Vec<Address> = env.storage()
+        let approved_minters: Vec<Address> = env
+            .storage()
             .instance()
             .get(&Symbol::new(env, APPROVED_MINTERS_KEY))
             .unwrap_or_else(|| Vec::new(env));
@@ -180,7 +203,7 @@ impl AgentNFT {
     }
 
     /// Mint a new agent NFT - Implements requirement from issue
-    /// 
+    ///
     /// # Arguments
     /// * `agent_id` - Unique identifier for the agent (u128 in spec, using u64 for storage efficiency)
     /// * `owner` - Address of the agent owner
@@ -202,12 +225,13 @@ impl AgentNFT {
         initial_evolution_level: u32,
     ) -> Result<(), ContractError> {
         owner.require_auth();
-        
+
         // Validate caller authorization (admin or approved minter)
         Self::verify_minter(&env, &owner)?;
 
         // Convert u128 to u64 for storage (validate it fits)
-        let agent_id_u64 = agent_id.try_into()
+        let agent_id_u64 = agent_id
+            .try_into()
             .map_err(|_| ContractError::InvalidInput)?;
 
         // Enforce uniqueness of agent_id
@@ -224,8 +248,8 @@ impl AgentNFT {
         let agent = Agent {
             id: agent_id_u64,
             owner: owner.clone(),
-            name: String::from_str(&env, ""),  // Can be set via update_agent
-            model_hash: String::from_str(&env, ""),  // Can be set via update_agent
+            name: String::from_str(&env, ""), // Can be set via update_agent
+            model_hash: String::from_str(&env, ""), // Can be set via update_agent
             metadata_cid,
             capabilities: Vec::new(&env),
             evolution_level: initial_evolution_level,
@@ -237,14 +261,14 @@ impl AgentNFT {
         // Persist agent data
         let key = Self::get_agent_key(&env, agent_id_u64);
         env.storage().instance().set(&key, &agent);
-        
+
         // Initialize lease status to false (not leased)
         Self::set_agent_lease_status(&env, agent_id_u64, false);
 
         // Emit AgentMinted event
         env.events().publish(
             (Symbol::new(&env, "agent_nft"), AgentEvent::AgentMinted),
-            (agent_id_u64, owner.clone(), initial_evolution_level)
+            (agent_id_u64, owner.clone(), initial_evolution_level),
         );
 
         Ok(())
@@ -259,7 +283,7 @@ impl AgentNFT {
         capabilities: Vec<String>,
     ) -> Result<u64, ContractError> {
         owner.require_auth();
-        
+
         // Validate caller authorization
         Self::verify_minter(&env, &owner)?;
 
@@ -284,13 +308,14 @@ impl AgentNFT {
         }
 
         // Increment agent counter safely
-        let counter: u64 = env.storage()
+        let counter: u64 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, AGENT_COUNTER_KEY))
             .unwrap_or(0);
-        
+
         let agent_id = Self::safe_add(counter, 1)?;
-        
+
         // Create agent
         let agent = Agent {
             id: agent_id,
@@ -303,24 +328,24 @@ impl AgentNFT {
             created_at: env.ledger().timestamp(),
             updated_at: env.ledger().timestamp(),
             nonce: 0,
-            escrow_locked: false,
-            escrow_holder: None,
         };
 
         // Store agent
         let key = Self::get_agent_key(&env, agent_id);
         env.storage().instance().set(&key, &agent);
-        
+
         // Initialize lease status
         Self::set_agent_lease_status(&env, agent_id, false);
-        
+
         // Update counter
-        env.storage().instance().set(&Symbol::new(&env, AGENT_COUNTER_KEY), &agent_id);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, AGENT_COUNTER_KEY), &agent_id);
 
         // Emit event
         env.events().publish(
             (Symbol::new(&env, "agent_nft"), AgentEvent::AgentMinted),
-            (agent_id, owner.clone())
+            (agent_id, owner.clone()),
         );
 
         Ok(agent_id)
@@ -354,7 +379,8 @@ impl AgentNFT {
         }
 
         let key = Self::get_agent_key(&env, agent_id);
-        let mut agent: Agent = env.storage()
+        let mut agent: Agent = env
+            .storage()
             .instance()
             .get(&key)
             .ok_or(ContractError::AgentNotFound)?;
@@ -392,14 +418,17 @@ impl AgentNFT {
         }
 
         // Increment nonce for replay protection
-        agent.nonce = agent.nonce.checked_add(1).ok_or(ContractError::OverflowError)?;
+        agent.nonce = agent
+            .nonce
+            .checked_add(1)
+            .ok_or(ContractError::OverflowError)?;
         agent.updated_at = env.ledger().timestamp();
 
         env.storage().instance().set(&key, &agent);
-        
+
         env.events().publish(
             (Symbol::new(&env, "agent_nft"), AgentEvent::AgentUpdated),
-            (agent_id, owner)
+            (agent_id, owner),
         );
 
         Ok(())
@@ -445,7 +474,8 @@ impl AgentNFT {
         }
 
         let key = Self::get_agent_key(&env, agent_id);
-        let mut agent: Agent = env.storage()
+        let mut agent: Agent = env
+            .storage()
             .instance()
             .get(&key)
             .ok_or(ContractError::AgentNotFound)?;
@@ -460,14 +490,17 @@ impl AgentNFT {
 
         let previous_owner = agent.owner.clone();
         agent.owner = to.clone();
-        agent.nonce = agent.nonce.checked_add(1).ok_or(ContractError::OverflowError)?;
+        agent.nonce = agent
+            .nonce
+            .checked_add(1)
+            .ok_or(ContractError::OverflowError)?;
         agent.updated_at = env.ledger().timestamp();
 
         env.storage().instance().set(&key, &agent);
 
         env.events().publish(
             (Symbol::new(&env, "agent_nft"), AgentEvent::AgentTransferred),
-            (agent_id, previous_owner, to.clone())
+            (agent_id, previous_owner, to.clone()),
         );
 
         Ok(())
@@ -513,10 +546,10 @@ impl AgentNFT {
         }
 
         Self::set_agent_lease_status(&env, agent_id, true);
-        
+
         env.events().publish(
             (Symbol::new(&env, "agent_nft"), AgentEvent::LeaseStarted),
-            (agent_id, env.ledger().timestamp())
+            (agent_id, env.ledger().timestamp()),
         );
 
         Ok(())
@@ -529,10 +562,10 @@ impl AgentNFT {
         }
 
         Self::set_agent_lease_status(&env, agent_id, false);
-        
+
         env.events().publish(
             (Symbol::new(&env, "agent_nft"), AgentEvent::LeaseEnded),
-            (agent_id, env.ledger().timestamp())
+            (agent_id, env.ledger().timestamp()),
         );
 
         Ok(())

@@ -1,6 +1,8 @@
 #![no_std]
+extern crate alloc;
+use alloc::format;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Map};
+use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol};
 
 const ADMIN_KEY: &str = "admin";
 const CLAIM_COOLDOWN_KEY: &str = "claim_cooldown";
@@ -20,25 +22,39 @@ pub struct Faucet;
 impl Faucet {
     /// Initialize faucet (admin only)
     pub fn init_faucet(env: Env, admin: Address, testnet_only: bool) {
-        let admin_data = env.storage().instance().get::<_, Address>(&Symbol::new(&env, ADMIN_KEY));
+        let admin_data = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&Symbol::new(&env, ADMIN_KEY));
         if admin_data.is_some() {
             panic!("Contract already initialized");
         }
 
         admin.require_auth();
-        env.storage().instance().set(&Symbol::new(&env, ADMIN_KEY), &admin);
-        env.storage().instance().set(&Symbol::new(&env, CLAIM_COOLDOWN_KEY), &DEFAULT_COOLDOWN_SECONDS);
-        env.storage().instance().set(&Symbol::new(&env, MAX_CLAIMS_PER_PERIOD_KEY), &DEFAULT_MAX_CLAIMS);
-        env.storage().instance().set(&Symbol::new(&env, TESTNET_FLAG_KEY), &testnet_only);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, ADMIN_KEY), &admin);
+        env.storage().instance().set(
+            &Symbol::new(&env, CLAIM_COOLDOWN_KEY),
+            &DEFAULT_COOLDOWN_SECONDS,
+        );
+        env.storage().instance().set(
+            &Symbol::new(&env, MAX_CLAIMS_PER_PERIOD_KEY),
+            &DEFAULT_MAX_CLAIMS,
+        );
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, TESTNET_FLAG_KEY), &testnet_only);
     }
 
     /// Verify caller is admin
     fn verify_admin(env: &Env, caller: &Address) {
-        let admin: Address = env.storage()
+        let admin: Address = env
+            .storage()
             .instance()
             .get(&Symbol::new(env, ADMIN_KEY))
             .expect("Admin not set");
-        
+
         if caller != &admin {
             panic!("Unauthorized: caller is not admin");
         }
@@ -53,10 +69,7 @@ impl Faucet {
     }
 
     /// Claim a test agent from the faucet with comprehensive security
-    pub fn claim_test_agent(
-        env: Env,
-        claimer: Address,
-    ) -> u64 {
+    pub fn claim_test_agent(env: Env, claimer: Address) -> u64 {
         claimer.require_auth();
 
         // Security: Verify testnet mode
@@ -65,7 +78,7 @@ impl Faucet {
         }
 
         // Check eligibility
-        if !Self::check_eligibility(&env, &claimer) {
+        if !Self::check_eligibility(env.clone(), claimer.clone()) {
             panic!("Address is not eligible for faucet claim at this time");
         }
 
@@ -75,38 +88,41 @@ impl Faucet {
 
         // Update rate limiting state
         let now = env.ledger().timestamp();
-        let last_claim_key = String::from_slice(&env, 
-            &format!("{}{}", LAST_CLAIM_KEY_PREFIX, claimer).as_bytes()
+        let last_claim_key = String::from_str(
+            &env,
+            &format!("{:?}{:?}", LAST_CLAIM_KEY_PREFIX, claimer),
         );
-        let claim_count_key = String::from_slice(&env,
-            &format!("{}{}", CLAIM_COUNT_KEY_PREFIX, claimer).as_bytes()
+        let claim_count_key = String::from_str(
+            &env,
+            &format!("{:?}{:?}", CLAIM_COUNT_KEY_PREFIX, claimer),
         );
 
         env.storage().instance().set(&last_claim_key, &now);
         env.storage().instance().set(&claim_count_key, &1u32);
 
-        env.events().publish(
-            (Symbol::new(&env, "agent_claimed"),),
-            (agent_id, claimer)
-        );
+        env.events()
+            .publish((Symbol::new(&env, "agent_claimed"),), (agent_id, claimer));
 
         agent_id
     }
 
     /// Check if an address is eligible for a faucet claim
     pub fn check_eligibility(env: Env, address: Address) -> bool {
-        let cooldown: u64 = env.storage()
+        let cooldown: u64 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, CLAIM_COOLDOWN_KEY))
             .unwrap_or(DEFAULT_COOLDOWN_SECONDS);
 
-        let max_claims: u32 = env.storage()
+        let max_claims: u32 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, MAX_CLAIMS_PER_PERIOD_KEY))
             .unwrap_or(DEFAULT_MAX_CLAIMS);
 
-        let last_claim_key = String::from_slice(&env,
-            &format!("{}{}", LAST_CLAIM_KEY_PREFIX, address).as_bytes()
+        let last_claim_key = String::from_str(
+            &env,
+            &format!("{:?}{:?}", LAST_CLAIM_KEY_PREFIX, address),
         );
         let last_claim: Option<u64> = env.storage().instance().get(&last_claim_key);
 
@@ -121,13 +137,11 @@ impl Faucet {
                 }
 
                 // Check claim count within current period
-                let claim_count_key = String::from_slice(&env,
-                    &format!("{}{}", CLAIM_COUNT_KEY_PREFIX, address).as_bytes()
+                let claim_count_key = String::from_str(
+                    &env,
+                    &format!("{:?}{:?}", CLAIM_COUNT_KEY_PREFIX, address),
                 );
-                let claims: u32 = env.storage()
-                    .instance()
-                    .get(&claim_count_key)
-                    .unwrap_or(0);
+                let claims: u32 = env.storage().instance().get(&claim_count_key).unwrap_or(0);
 
                 claims < max_claims
             }
@@ -156,23 +170,31 @@ impl Faucet {
             panic!("Max claims must be between 1 and 100");
         }
 
-        env.storage().instance().set(&Symbol::new(&env, CLAIM_COOLDOWN_KEY), &claim_cooldown_seconds);
-        env.storage().instance().set(&Symbol::new(&env, MAX_CLAIMS_PER_PERIOD_KEY), &max_claims_per_period);
+        env.storage().instance().set(
+            &Symbol::new(&env, CLAIM_COOLDOWN_KEY),
+            &claim_cooldown_seconds,
+        );
+        env.storage().instance().set(
+            &Symbol::new(&env, MAX_CLAIMS_PER_PERIOD_KEY),
+            &max_claims_per_period,
+        );
 
         env.events().publish(
             (Symbol::new(&env, "parameters_updated"),),
-            (claim_cooldown_seconds, max_claims_per_period)
+            (claim_cooldown_seconds, max_claims_per_period),
         );
     }
 
     /// Get current faucet parameters
     pub fn get_parameters(env: Env) -> (u64, u32) {
-        let cooldown: u64 = env.storage()
+        let cooldown: u64 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, CLAIM_COOLDOWN_KEY))
             .unwrap_or(DEFAULT_COOLDOWN_SECONDS);
 
-        let max_claims: u32 = env.storage()
+        let max_claims: u32 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, MAX_CLAIMS_PER_PERIOD_KEY))
             .unwrap_or(DEFAULT_MAX_CLAIMS);
@@ -182,13 +204,15 @@ impl Faucet {
 
     /// Get remaining cooldown time for an address
     pub fn get_remaining_cooldown(env: Env, address: Address) -> u64 {
-        let cooldown: u64 = env.storage()
+        let cooldown: u64 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, CLAIM_COOLDOWN_KEY))
             .unwrap_or(DEFAULT_COOLDOWN_SECONDS);
 
-        let last_claim_key = String::from_slice(&env,
-            &format!("{}{}", LAST_CLAIM_KEY_PREFIX, address).as_bytes()
+        let last_claim_key = String::from_str(
+            &env,
+            &format!("{:?}{:?}", LAST_CLAIM_KEY_PREFIX, address),
         );
         let last_claim: Option<u64> = env.storage().instance().get(&last_claim_key);
 
@@ -212,8 +236,10 @@ impl Faucet {
         admin.require_auth();
         Self::verify_admin(&env, &admin);
 
-        env.storage().instance().set(&Symbol::new(&env, TESTNET_FLAG_KEY), &paused);
-        env.events().publish((Symbol::new(&env, "faucet_paused"),), (paused,));
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, TESTNET_FLAG_KEY), &paused);
+        env.events()
+            .publish((Symbol::new(&env, "faucet_paused"),), (paused,));
     }
 }
-

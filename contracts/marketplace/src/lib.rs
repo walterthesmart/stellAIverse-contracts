@@ -15,24 +15,34 @@ pub struct Marketplace;
 impl Marketplace {
     /// Initialize contract with admin
     pub fn init_contract(env: Env, admin: Address) {
-        let admin_data = env.storage().instance().get::<_, Address>(&Symbol::new(&env, ADMIN_KEY));
+        let admin_data = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&Symbol::new(&env, ADMIN_KEY));
         if admin_data.is_some() {
             panic!("Contract already initialized");
         }
 
         admin.require_auth();
-        env.storage().instance().set(&Symbol::new(&env, ADMIN_KEY), &admin);
-        env.storage().instance().set(&Symbol::new(&env, LISTING_COUNTER_KEY), &0u64);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, ADMIN_KEY), &admin);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, LISTING_COUNTER_KEY), &0u64);
     }
 
     /// Set the AgentNFT contract address (called once by admin)
     pub fn set_agent_nft_contract(env: Env, admin: Address, agent_nft_contract: Address) {
         Self::verify_admin(&env, &admin);
-        env.storage().instance().set(&Symbol::new(&env, AGENT_NFT_CONTRACT_KEY), &agent_nft_contract);
-        
+        env.storage().instance().set(
+            &Symbol::new(&env, AGENT_NFT_CONTRACT_KEY),
+            &agent_nft_contract,
+        );
+
         env.events().publish(
             (Symbol::new(&env, "agent_nft_contract_set"),),
-            agent_nft_contract
+            agent_nft_contract,
         );
     }
 
@@ -46,11 +56,12 @@ impl Marketplace {
 
     /// Verify caller is admin
     fn verify_admin(env: &Env, caller: &Address) {
-        let admin: Address = env.storage()
+        let admin: Address = env
+            .storage()
             .instance()
             .get(&Symbol::new(env, ADMIN_KEY))
             .expect("Admin not set");
-        
+
         if caller != &admin {
             panic!("Unauthorized: caller is not admin");
         }
@@ -63,7 +74,8 @@ impl Marketplace {
 
     /// Safe multiplication with overflow checks for price calculations
     fn safe_mul_i128(a: i128, b: u32) -> i128 {
-        a.checked_mul(b as i128).expect("Arithmetic overflow in multiplication")
+        a.checked_mul(b as i128)
+            .expect("Arithmetic overflow in multiplication")
     }
 
     /// Create a new listing with comprehensive validation and escrow locking
@@ -103,7 +115,8 @@ impl Marketplace {
 
         // Verify agent exists and seller is owner via AgentNFT contract
         let agent_key_str = String::from_str(&env, "agent_");
-        let agent: shared::Agent = env.storage()
+        let agent: shared::Agent = env
+            .storage()
             .instance()
             .get(&agent_key_str)
             .expect("Agent not found");
@@ -118,7 +131,8 @@ impl Marketplace {
         }
 
         // Generate listing ID safely
-        let counter: u64 = env.storage()
+        let counter: u64 = env
+            .storage()
             .instance()
             .get(&Symbol::new(&env, LISTING_COUNTER_KEY))
             .unwrap_or(0);
@@ -143,9 +157,11 @@ impl Marketplace {
         // Store listing
         let key_str = String::from_str(&env, LISTING_KEY_PREFIX);
         env.storage().instance().set(&key_str, &listing);
-        
+
         // Update counter
-        env.storage().instance().set(&Symbol::new(&env, LISTING_COUNTER_KEY), &listing_id);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, LISTING_COUNTER_KEY), &listing_id);
 
         // Lock agent in escrow
         let marketplace_address = env.current_contract_address();
@@ -161,12 +177,12 @@ impl Marketplace {
 
         env.events().publish(
             (Symbol::new(&env, "listing_created"),),
-            (listing_id, agent_id, seller.clone(), price)
+            (listing_id, agent_id, seller.clone(), price),
         );
 
         env.events().publish(
             (Symbol::new(&env, "agent_escrow_locked"),),
-            (agent_id, seller, marketplace_address)
+            (agent_id, seller, marketplace_address),
         );
 
         listing_id
@@ -188,7 +204,8 @@ impl Marketplace {
 
         // Get listing
         let listing_key_str = String::from_str(&env, LISTING_KEY_PREFIX);
-        let mut listing: shared::Listing = env.storage()
+        let mut listing: shared::Listing = env
+            .storage()
             .instance()
             .get(&listing_key_str)
             .expect("Listing not found");
@@ -208,7 +225,8 @@ impl Marketplace {
 
         // Get agent to verify it's locked in escrow
         let agent_key_str = String::from_str(&env, "agent_");
-        let mut agent: shared::Agent = env.storage()
+        let mut agent: shared::Agent = env
+            .storage()
             .instance()
             .get(&agent_key_str)
             .expect("Agent not found");
@@ -217,7 +235,7 @@ impl Marketplace {
         if !agent.escrow_locked {
             panic!("Agent is not locked in escrow");
         }
-        
+
         let marketplace_address = env.current_contract_address();
         match &agent.escrow_holder {
             Some(holder) => {
@@ -230,9 +248,8 @@ impl Marketplace {
 
         // Get royalty info if exists
         let royalty_key_str = String::from_str(&env, ROYALTY_KEY_PREFIX);
-        let royalty_info: Option<shared::RoyaltyInfo> = env.storage()
-            .instance()
-            .get(&royalty_key_str);
+        let royalty_info: Option<shared::RoyaltyInfo> =
+            env.storage().instance().get(&royalty_key_str);
 
         // Calculate and validate royalty (if exists)
         let mut royalty_amount: i128 = 0;
@@ -272,12 +289,18 @@ impl Marketplace {
 
         env.events().publish(
             (Symbol::new(&env, "agent_sold"),),
-            (listing_id, listing.agent_id, buyer.clone(), seller_amount, royalty_amount)
+            (
+                listing_id,
+                listing.agent_id,
+                buyer.clone(),
+                seller_amount,
+                royalty_amount,
+            ),
         );
 
         env.events().publish(
             (Symbol::new(&env, "agent_escrow_released"),),
-            (listing.agent_id, buyer, marketplace_address)
+            (listing.agent_id, buyer, marketplace_address),
         );
     }
 
@@ -290,7 +313,8 @@ impl Marketplace {
         }
 
         let listing_key_str = String::from_str(&env, LISTING_KEY_PREFIX);
-        let mut listing: shared::Listing = env.storage()
+        let mut listing: shared::Listing = env
+            .storage()
             .instance()
             .get(&listing_key_str)
             .expect("Listing not found");
@@ -301,7 +325,8 @@ impl Marketplace {
 
         // Get agent to release from escrow
         let agent_key_str = String::from_str(&env, "agent_");
-        let mut agent: shared::Agent = env.storage()
+        let mut agent: shared::Agent = env
+            .storage()
             .instance()
             .get(&agent_key_str)
             .expect("Agent not found");
@@ -310,7 +335,7 @@ impl Marketplace {
         if !agent.escrow_locked {
             panic!("Agent is not locked in escrow");
         }
-        
+
         let marketplace_address = env.current_contract_address();
         match &agent.escrow_holder {
             Some(holder) => {
@@ -335,21 +360,17 @@ impl Marketplace {
 
         env.events().publish(
             (Symbol::new(&env, "listing_cancelled"),),
-            (listing_id, listing.agent_id, seller.clone())
+            (listing_id, listing.agent_id, seller.clone()),
         );
 
         env.events().publish(
             (Symbol::new(&env, "agent_escrow_released"),),
-            (listing.agent_id, seller, marketplace_address)
+            (listing.agent_id, seller, marketplace_address),
         );
     }
 
     /// Get active listings (with pagination to prevent DoS)
-    pub fn get_listings(
-        env: Env,
-        offset: u32,
-        limit: u32,
-    ) -> soroban_sdk::Vec<shared::Listing> {
+    pub fn get_listings(env: Env, offset: u32, limit: u32) -> soroban_sdk::Vec<shared::Listing> {
         // Limit query size to prevent DoS
         if limit > 100 || limit == 0 {
             panic!("Limit must be between 1 and 100");
@@ -382,7 +403,8 @@ impl Marketplace {
 
         // Get agent to verify caller is creator
         let agent_key_str = String::from_str(&env, "agent_");
-        let agent: shared::Agent = env.storage()
+        let agent: shared::Agent = env
+            .storage()
             .instance()
             .get(&agent_key_str)
             .expect("Agent not found");
@@ -397,12 +419,12 @@ impl Marketplace {
         };
 
         let royalty_key_str = String::from_str(&env, ROYALTY_KEY_PREFIX);
-        env.storage().instance().set(&royalty_key_str, &royalty_info);
+        env.storage()
+            .instance()
+            .set(&royalty_key_str, &royalty_info);
 
-        env.events().publish(
-            (Symbol::new(&env, "royalty_set"),),
-            (agent_id, percentage)
-        );
+        env.events()
+            .publish((Symbol::new(&env, "royalty_set"),), (agent_id, percentage));
     }
 
     /// Get royalty info for an agent
