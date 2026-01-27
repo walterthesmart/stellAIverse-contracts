@@ -1,10 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
-use stellai_lib::OracleData;
-
-const ADMIN_KEY: &str = "admin";
-const PROVIDER_LIST_KEY: &str = "providers";
+use stellai_lib::{OracleData, ADMIN_KEY, PROVIDER_LIST_KEY};
 
 #[contract]
 pub struct Oracle;
