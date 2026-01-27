@@ -1,3 +1,5 @@
+
+#![allow(unused_imports)]
 use soroban_sdk::{contracttype, Address, Bytes, String, Vec};
 
 /// Represents an agent's metadata and state

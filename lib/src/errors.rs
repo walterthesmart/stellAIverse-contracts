@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use soroban_sdk::{contracterror, contracttype, Address, Bytes, String, Vec};
 
 // ============================================================================
