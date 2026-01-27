@@ -3,9 +3,18 @@ name = "execution-hub"
 version.workspace = true
 edition.workspace = true
 
+[features]
+testutils = ["soroban-sdk/testutils"]
+
 [dependencies]
 soroban-sdk = { version = "20.5.0", features = ["alloc"] }
 shared = { path = "../../shared" }
 
+[dev-dependencies]
+soroban-sdk = { version = "20.5.0", features = ["testutils"] }
+
 [lib]
 crate-type = ["cdylib"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"testutils\"))"] }
