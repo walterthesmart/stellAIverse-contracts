@@ -1,12 +1,10 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Map};
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 
 const ADMIN_KEY: &str = "admin";
 const CLAIM_COOLDOWN_KEY: &str = "claim_cooldown";
 const MAX_CLAIMS_PER_PERIOD_KEY: &str = "max_claims_per_period";
-const LAST_CLAIM_KEY_PREFIX: &str = "last_claim_";
-const CLAIM_COUNT_KEY_PREFIX: &str = "claim_count_";
 const TESTNET_FLAG_KEY: &str = "testnet_mode";
 
 // Default parameters
@@ -38,7 +36,7 @@ impl Faucet {
             .instance()
             .get(&Symbol::new(env, ADMIN_KEY))
             .expect("Admin not set");
-        
+
         if caller != &admin {
             panic!("Unauthorized: caller is not admin");
         }
@@ -52,11 +50,8 @@ impl Faucet {
             .unwrap_or(true)
     }
 
-    /// Claim a test agent from the faucet with comprehensive security
-    pub fn claim_test_agent(
-        env: Env,
-        claimer: Address,
-    ) -> u64 {
+    /// Claim a test agent from the faucet
+    pub fn claim_test_agent(env: Env, claimer: Address) -> u64 {
         claimer.require_auth();
 
         // Security: Verify testnet mode
@@ -65,24 +60,19 @@ impl Faucet {
         }
 
         // Check eligibility
-        if !Self::check_eligibility(&env, &claimer) {
+        if !Self::check_eligibility(env.clone(), claimer.clone()) {
             panic!("Address is not eligible for faucet claim at this time");
         }
 
-        // In production: Call agent-nft contract to mint test agent
-        // For now, returning placeholder ID
-        let agent_id = 1u64;
-
-        // Update rate limiting state
+        let agent_id = 1u64; // Placeholder ID
         let now = env.ledger().timestamp();
-        let last_claim_key = String::from_slice(&env, 
-            &format!("{}{}", LAST_CLAIM_KEY_PREFIX, claimer).as_bytes()
-        );
-        let claim_count_key = String::from_slice(&env,
-            &format!("{}{}", CLAIM_COUNT_KEY_PREFIX, claimer).as_bytes()
-        );
 
+        // Store last claim time using tuple key
+        let last_claim_key = (Symbol::new(&env, "last_claim"), claimer.clone());
         env.storage().instance().set(&last_claim_key, &now);
+
+        // Store claim count using tuple key
+        let claim_count_key = (Symbol::new(&env, "claim_count"), claimer.clone());
         env.storage().instance().set(&claim_count_key, &1u32);
 
         env.events().publish(
@@ -105,9 +95,7 @@ impl Faucet {
             .get(&Symbol::new(&env, MAX_CLAIMS_PER_PERIOD_KEY))
             .unwrap_or(DEFAULT_MAX_CLAIMS);
 
-        let last_claim_key = String::from_slice(&env,
-            &format!("{}{}", LAST_CLAIM_KEY_PREFIX, address).as_bytes()
-        );
+        let last_claim_key = (Symbol::new(&env, "last_claim"), address.clone());
         let last_claim: Option<u64> = env.storage().instance().get(&last_claim_key);
 
         match last_claim {
@@ -121,9 +109,7 @@ impl Faucet {
                 }
 
                 // Check claim count within current period
-                let claim_count_key = String::from_slice(&env,
-                    &format!("{}{}", CLAIM_COUNT_KEY_PREFIX, address).as_bytes()
-                );
+                let claim_count_key = (Symbol::new(&env, "claim_count"), address.clone());
                 let claims: u32 = env.storage()
                     .instance()
                     .get(&claim_count_key)
@@ -135,22 +121,14 @@ impl Faucet {
         }
     }
 
-    /// Admin function: Set faucet parameters with validation
-    pub fn set_parameters(
-        env: Env,
-        admin: Address,
-        claim_cooldown_seconds: u64,
-        max_claims_per_period: u32,
-    ) {
+    /// Admin function: Set faucet parameters
+    pub fn set_parameters(env: Env, admin: Address, claim_cooldown_seconds: u64, max_claims_per_period: u32) {
         admin.require_auth();
         Self::verify_admin(&env, &admin);
 
-        // Validation: prevent unreasonable values
+        // Validation
         if claim_cooldown_seconds == 0 {
             panic!("Cooldown must be greater than 0");
-        }
-        if claim_cooldown_seconds > 365 * 24 * 60 * 60 {
-            panic!("Cooldown exceeds one year");
         }
         if max_claims_per_period == 0 || max_claims_per_period > 100 {
             panic!("Max claims must be between 1 and 100");
@@ -187,9 +165,7 @@ impl Faucet {
             .get(&Symbol::new(&env, CLAIM_COOLDOWN_KEY))
             .unwrap_or(DEFAULT_COOLDOWN_SECONDS);
 
-        let last_claim_key = String::from_slice(&env,
-            &format!("{}{}", LAST_CLAIM_KEY_PREFIX, address).as_bytes()
-        );
+        let last_claim_key = (Symbol::new(&env, "last_claim"), address.clone());
         let last_claim: Option<u64> = env.storage().instance().get(&last_claim_key);
 
         match last_claim {
@@ -198,12 +174,12 @@ impl Faucet {
                 let elapsed = now.checked_sub(timestamp).unwrap_or(0);
 
                 if elapsed >= cooldown {
-                    0 // Eligible now
+                    0
                 } else {
                     cooldown.checked_sub(elapsed).unwrap_or(0)
                 }
             }
-            None => 0, // Never claimed, eligible now
+            None => 0,
         }
     }
 
@@ -211,9 +187,7 @@ impl Faucet {
     pub fn pause_faucet(env: Env, admin: Address, paused: bool) {
         admin.require_auth();
         Self::verify_admin(&env, &admin);
-
-        env.storage().instance().set(&Symbol::new(&env, TESTNET_FLAG_KEY), &paused);
+        env.storage().instance().set(&Symbol::new(&env, TESTNET_FLAG_KEY), &!paused);
         env.events().publish((Symbol::new(&env, "faucet_paused"),), (paused,));
     }
 }
-

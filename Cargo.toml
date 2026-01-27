@@ -1,24 +1,26 @@
 [workspace]
 members = [
     "contracts/agent-nft",
+    "contracts/agent-token",
     "contracts/execution-hub",
     "contracts/marketplace",
     "contracts/evolution",
     "contracts/oracle",
     "contracts/faucet",
-    "shared",
+    "lib",
 ]
+
 resolver = "2"
 
-[workspace.package]
-version = "0.1.0"
-edition = "2021"
-publish = false
-
 [profile.release]
-opt-level = "z"
+codegen-units = 1
+opt-level = 'z'
 lto = true
+debug = false
+strip = "symbols"
+overflow-checks = true
 
 [profile.release-with-logs]
 inherits = "release"
 debug = true
+strip = "none"
