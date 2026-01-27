@@ -3,18 +3,10 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Symbol, Vec,
 };
-
-// Storage keys
-const ADMIN_KEY: Symbol = symbol_short!("admin");
-const EXEC_CTR_KEY: Symbol = symbol_short!("exec_ctr");
-
-// Config
-const MAX_STRING_LENGTH: u32 = 256;
-const MAX_DATA_SIZE: u32 = 65536;
-const MAX_HISTORY_SIZE: u32 = 1000;
-const MAX_HISTORY_QUERY_LIMIT: u32 = 500;
-const DEFAULT_RATE_LIMIT_OPERATIONS: u32 = 100;
-const DEFAULT_RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
+use stellai_lib::{
+    ADMIN_KEY, DEFAULT_RATE_LIMIT_OPERATIONS, DEFAULT_RATE_LIMIT_WINDOW_SECONDS, EXEC_CTR_KEY,
+    MAX_DATA_SIZE, MAX_HISTORY_QUERY_LIMIT, MAX_HISTORY_SIZE, MAX_STRING_LENGTH,
+};
 
 // Data structures
 #[derive(Clone)]

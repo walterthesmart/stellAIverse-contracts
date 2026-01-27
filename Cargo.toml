@@ -24,3 +24,6 @@ overflow-checks = true
 inherits = "release"
 debug = true
 strip = "none"
+
+[workspace.dependencies]
+soroban-sdk = "20.5.0"

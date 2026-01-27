@@ -4,15 +4,10 @@ extern crate alloc;
 
 // use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Map};
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
-
-// use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
-
-const ADMIN_KEY: &str = "admin";
-const CLAIM_COOLDOWN_KEY: &str = "claim_cooldown";
-const MAX_CLAIMS_PER_PERIOD_KEY: &str = "max_claims_per_period";
-const DEFAULT_COOLDOWN_SECONDS: u64 = 86400; // 24 hours
-const DEFAULT_MAX_CLAIMS: u32 = 1;
-const TESTNET_FLAG_KEY: &str = "testnet_mode";
+use stellai_lib::{
+    ADMIN_KEY, CLAIM_COOLDOWN_KEY, DEFAULT_COOLDOWN_SECONDS, DEFAULT_MAX_CLAIMS,
+    MAX_CLAIMS_PER_PERIOD_KEY, TESTNET_FLAG_KEY,
+};
 
 #[contract]
 pub struct Faucet;
