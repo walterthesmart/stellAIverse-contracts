@@ -32,6 +32,7 @@ pub struct ActionRecord {
     pub executor: Address,
     pub timestamp: u64,
     pub nonce: u64,
+    pub execution_hash: Bytes,
 }
 
 #[derive(Clone)]
@@ -130,7 +131,9 @@ impl ExecutionHub {
         agent_id: u64,
         executor: Address,
         action: String,
+
         parameters: Bytes,
+        execution_hash: Bytes,
         nonce: u64,
     ) -> u64 {
         executor.require_auth();
@@ -138,6 +141,7 @@ impl ExecutionHub {
         Self::validate_agent_id(agent_id);
         Self::validate_string_length(&action, "Action name");
         Self::validate_data_size(&parameters, "Parameters");
+        Self::validate_data_size(&execution_hash, "Execution hash");
 
         // Replay protection
         let stored_nonce = Self::get_action_nonce(&env, agent_id);
@@ -155,12 +159,12 @@ impl ExecutionHub {
 
         let execution_id = Self::next_execution_id(&env);
         Self::set_action_nonce(&env, agent_id, nonce);
-        Self::record_action_in_history(&env, agent_id, execution_id, &action, &executor, nonce);
+        Self::record_action(&env, agent_id, execution_id, &action, &executor, nonce, &execution_hash);
 
         let timestamp = env.ledger().timestamp();
         env.events().publish(
             (symbol_short!("act_exec"),),
-            (execution_id, agent_id, action, executor, timestamp, nonce),
+            (execution_id, agent_id, action, executor, timestamp, nonce, execution_hash),
         );
 
         execution_id
@@ -196,6 +200,12 @@ impl ExecutionHub {
         }
 
         result
+    }
+
+    // Get specific receipt by execution ID
+    pub fn get_receipt(env: Env, execution_id: u64) -> Option<ActionRecord> {
+        let receipt_key = (symbol_short!("receipt"), execution_id);
+        env.storage().instance().get(&receipt_key)
     }
 
     // Get total action count
@@ -276,14 +286,15 @@ impl ExecutionHub {
         env.storage().instance().set(&agent_nonce_key, &nonce);
     }
 
-    // Helper: record action in history
-    fn record_action_in_history(
+    // Helper: record action in history and as receipt
+    fn record_action(
         env: &Env,
         agent_id: u64,
         execution_id: u64,
         action: &String,
         executor: &Address,
         nonce: u64,
+        execution_hash: &Bytes,
     ) {
         let history_key = symbol_short!("hist");
         let agent_key = (history_key, agent_id);
@@ -305,10 +316,16 @@ impl ExecutionHub {
             executor: executor.clone(),
             timestamp,
             nonce,
+            execution_hash: execution_hash.clone(),
         };
 
-        history.push_back(record);
+        // Update history
+        history.push_back(record.clone());
         env.storage().instance().set(&agent_key, &history);
+
+        // Save receipt
+        let receipt_key = (symbol_short!("receipt"), execution_id);
+        env.storage().instance().set(&receipt_key, &record);
     }
 
     // Helper: check rate limit
@@ -392,12 +409,13 @@ mod test {
 
         let action = String::from_str(&env, "test_action");
         let params = Bytes::from_array(&env, &[1, 2, 3]);
+        let hash = Bytes::from_array(&env, &[0; 32]);
 
-        let exec_id_1 = client.execute_action(&1, &executor, &action, &params, &1);
+        let exec_id_1 = client.execute_action(&1, &executor, &action, &params, &hash, &1);
         assert_eq!(exec_id_1, 1);
         assert_eq!(client.get_execution_counter(), 1);
 
-        let exec_id_2 = client.execute_action(&1, &executor, &action, &params, &2);
+        let exec_id_2 = client.execute_action(&1, &executor, &action, &params, &hash, &2);
         assert_eq!(exec_id_2, 2);
         assert_eq!(client.get_execution_counter(), 2);
     }
@@ -439,9 +457,10 @@ mod test {
 
         let action = String::from_str(&env, "test");
         let params = Bytes::from_array(&env, &[1]);
+        let hash = Bytes::from_array(&env, &[0u8; 32]);
 
-        client.execute_action(&1, &executor, &action, &params, &1);
-        client.execute_action(&1, &executor, &action, &params, &1);
+        client.execute_action(&1, &executor, &action, &params, &hash, &1);
+        client.execute_action(&1, &executor, &action, &params, &hash, &1);
     }
 
     #[test]
@@ -458,9 +477,10 @@ mod test {
 
         let action = String::from_str(&env, "test_action");
         let params = Bytes::from_array(&env, &[1]);
+        let hash = Bytes::from_array(&env, &[0u8; 32]);
 
-        client.execute_action(&1, &executor, &action, &params, &1);
-        client.execute_action(&1, &executor, &action, &params, &2);
+        client.execute_action(&1, &executor, &action, &params, &hash, &1);
+        client.execute_action(&1, &executor, &action, &params, &hash, &2);
 
         let history = client.get_history(&1, &10);
         assert_eq!(history.len(), 2);
@@ -497,12 +517,13 @@ mod test {
 
         let action = String::from_str(&env, "test");
         let params = Bytes::from_array(&env, &[1]);
+        let hash = Bytes::from_array(&env, &[0u8; 32]);
 
         for i in 1..=10 {
-            client.execute_action(&1, &executor, &action, &params, &i);
+            client.execute_action(&1, &executor, &action, &params, &hash, &i);
         }
 
-        let result = client.execute_action(&1, &executor, &action, &params, &11);
+        let result = client.execute_action(&1, &executor, &action, &params, &hash, &11);
         assert!(result > 0);
     }
 }
