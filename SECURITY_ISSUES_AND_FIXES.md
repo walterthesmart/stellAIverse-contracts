@@ -1,8 +1,8 @@
 # Security Issues and Fixes Documentation
 
-**Project**: StellAIverse Smart Contracts  
-**Date**: January 21, 2026  
-**Version**: 1.0  
+**Project**: StellAIverse Smart Contracts
+**Date**: January 21, 2026
+**Version**: 1.0
 **Status**: Security Hardening Complete
 
 ---
@@ -17,14 +17,16 @@ This document details all security issues identified during the pre-audit harden
 
 ### CRITICAL-001: Missing Authentication on State-Modifying Functions
 
-**Severity**: 🔴 CRITICAL  
-**Category**: Access Control  
+**Severity**: 🔴 CRITICAL
+**Category**: Access Control
 **Status**: ✅ FIXED
 
 #### Description
+
 The initial contract implementations used `require_auth()` inconsistently, with some state-modifying functions lacking proper authentication checks. This would allow unauthorized callers to mint agents, create listings, or execute actions.
 
 #### Affected Functions
+
 - `agent_nft::mint_agent()`
 - `marketplace::create_listing()`
 - `marketplace::buy_agent()`
@@ -32,9 +34,11 @@ The initial contract implementations used `require_auth()` inconsistently, with 
 - `faucet::claim_test_agent()`
 
 #### Root Cause
+
 The contract templates treated `require_auth()` as optional for endpoints that should be protected.
 
 #### Fix Applied
+
 ```rust
 // BEFORE (Unsafe)
 pub fn mint_agent(env: Env, owner: Address, ...) {
@@ -50,6 +54,7 @@ pub fn mint_agent(env: Env, owner: Address, ...) {
 ```
 
 #### Verification
+
 - ✅ All state-modifying functions now call `require_auth()` on the principal actor
 - ✅ Read-only functions do not require auth
 - ✅ Admin functions call `verify_admin()` helper
@@ -58,14 +63,16 @@ pub fn mint_agent(env: Env, owner: Address, ...) {
 
 ### CRITICAL-002: Missing Ownership Verification
 
-**Severity**: 🔴 CRITICAL  
-**Category**: Access Control  
+**Severity**: 🔴 CRITICAL
+**Category**: Access Control
 **Status**: ✅ FIXED
 
 #### Description
+
 Even with authentication, functions did not verify that the caller owned the resource they were modifying. An authenticated user could potentially update or sell agents they didn't own.
 
 #### Affected Functions
+
 - `agent_nft::update_agent()`
 - `marketplace::create_listing()`
 - `marketplace::cancel_listing()`
@@ -76,9 +83,11 @@ Even with authentication, functions did not verify that the caller owned the res
 - `evolution::claim_stake()`
 
 #### Root Cause
+
 Functions accepted an owner/creator address parameter but didn't verify it matched the stored owner.
 
 #### Fix Applied
+
 ```rust
 // BEFORE (Unsafe)
 pub fn update_agent(..., agent_id: u64, ...) {
@@ -88,13 +97,13 @@ pub fn update_agent(..., agent_id: u64, ...) {
 // AFTER (Safe)
 pub fn update_agent(..., agent_id: u64, owner: Address, ...) {
     owner.require_auth();
-    
+
     // Fetch agent and verify ownership
-    let agent: shared::Agent = env.storage()
+    let agent: stellai_lib::Agent = env.storage()
         .instance()
         .get(&agent_key)
         .expect("Agent not found");
-    
+
     if agent.owner != owner {
         panic!("Unauthorized: only agent owner can update");
     }
@@ -102,6 +111,7 @@ pub fn update_agent(..., agent_id: u64, owner: Address, ...) {
 ```
 
 #### Verification
+
 - ✅ All resource modifications verify caller owns the resource
 - ✅ Agent owner matches `owner` parameter
 - ✅ Listing seller matches caller
@@ -111,24 +121,28 @@ pub fn update_agent(..., agent_id: u64, owner: Address, ...) {
 
 ### CRITICAL-003: No Replay Attack Protection
 
-**Severity**: 🔴 CRITICAL  
-**Category**: Replay Attack Prevention  
+**Severity**: 🔴 CRITICAL
+**Category**: Replay Attack Prevention
 **Status**: ✅ FIXED
 
 #### Description
+
 Without nonce tracking, an attacker could replay the same transaction multiple times. For example, resubmit a stake claim to get tokens twice, or replay an action execution to cause unintended side effects.
 
 #### Affected Operations
+
 - Agent updates
 - Action executions
 - Stake claims
 
 #### Root Cause
+
 The contracts did not implement any replay protection mechanism. Each transaction was treated independently without tracking whether it had been executed before.
 
 #### Fix Applied
 
 **1. Nonce field added to Agent struct**:
+
 ```rust
 pub struct Agent {
     pub id: u64,
@@ -139,6 +153,7 @@ pub struct Agent {
 ```
 
 **2. Nonce incremented on modifications**:
+
 ```rust
 pub fn update_agent(...) {
     // ... validation ...
@@ -148,16 +163,17 @@ pub fn update_agent(...) {
 ```
 
 **3. Nonce required and validated on sensitive operations**:
+
 ```rust
 pub fn execute_action(..., nonce: u64) {
     // Get stored nonce
     let stored_nonce = get_action_nonce(&env, agent_id);
-    
+
     // Verify provided nonce is greater than stored (increases monotonically)
     if nonce <= stored_nonce {
         panic!("Replay protection: invalid nonce");
     }
-    
+
     // Store new nonce
     let nonce_key = String::from_slice(...);
     env.storage().instance().set(&nonce_key, &nonce);
@@ -165,6 +181,7 @@ pub fn execute_action(..., nonce: u64) {
 ```
 
 #### Verification
+
 - ✅ Each agent has unique, monotonically increasing nonce
 - ✅ Nonce checked on sensitive operations (execute_action)
 - ✅ Nonce incremented safely with overflow checks
@@ -176,27 +193,32 @@ pub fn execute_action(..., nonce: u64) {
 
 ### HIGH-001: Integer Overflow Risk in Arithmetic Operations
 
-**Severity**: 🟠 HIGH  
-**Category**: Integer Overflow / Underflow  
+**Severity**: 🟠 HIGH
+**Category**: Integer Overflow / Underflow
 **Status**: ✅ FIXED
 
 #### Description
+
 The contracts performed arithmetic operations (especially on counters and prices) without checking for overflow conditions. This could cause:
+
 - Agent ID counter to wrap around
 - Price calculations to overflow
 - Royalty percentage calculations to become invalid
 
 #### Affected Operations
+
 - ID counter increments
-- Price * percentage calculations
+- Price \* percentage calculations
 - Seller amount = price - royalty
 
 #### Root Cause
-Using unchecked arithmetic operators (+, -, *) directly without validation.
+
+Using unchecked arithmetic operators (+, -, \*) directly without validation.
 
 #### Fix Applied
 
 **1. Safe counter increment**:
+
 ```rust
 // BEFORE (Unsafe)
 let agent_id = counter + 1;  // Could overflow
@@ -210,6 +232,7 @@ fn safe_add(a: u64, b: u64) -> u64 {
 ```
 
 **2. Safe multiplication for royalty**:
+
 ```rust
 // BEFORE (Unsafe)
 let royalty = amount * percentage / 10000;  // Could overflow
@@ -225,6 +248,7 @@ fn safe_mul_i128(a: i128, b: u32) -> i128 {
 ```
 
 **3. Safe subtraction for amounts**:
+
 ```rust
 let seller_amount = amount
     .checked_sub(royalty_amount)
@@ -232,6 +256,7 @@ let seller_amount = amount
 ```
 
 #### Verification
+
 - ✅ All addition operations use `checked_add()`
 - ✅ All multiplication operations use `checked_mul()`
 - ✅ All subtraction operations use `checked_sub()`
@@ -241,28 +266,33 @@ let seller_amount = amount
 
 ### HIGH-002: Unbounded Growth and DoS via Storage Operations
 
-**Severity**: 🟠 HIGH  
-**Category**: Denial of Service  
+**Severity**: 🟠 HIGH
+**Category**: Denial of Service
 **Status**: ✅ FIXED
 
 #### Description
+
 History arrays and collection structures could grow without bound, leading to:
+
 - Extremely expensive read operations
 - Storage quota exhaustion
 - Execution timeouts due to loop iterations
 
 #### Affected Storage
+
 - Action history per agent
 - Oracle data history per key
 - Provider list
 - Evolution request tracking
 
 #### Root Cause
+
 No size limits on persistent data structures; functions added data without removing old entries.
 
 #### Fix Applied
 
 **1. Action history cap**:
+
 ```rust
 // BEFORE (Unsafe)
 let mut history: Vec<String> = env.storage().get(...).unwrap_or_else(Vec::new);
@@ -281,6 +311,7 @@ history.push_back(action_record);
 ```
 
 **2. Query result pagination**:
+
 ```rust
 // BEFORE (Unsafe)
 pub fn get_history(..., limit: u32) -> Vec<String> {
@@ -298,6 +329,7 @@ pub fn get_history(..., limit: u32) -> Vec<String> {
 ```
 
 **3. Provider list cap**:
+
 ```rust
 if providers.len() >= 100 {
     panic!("Maximum number of providers reached");
@@ -306,6 +338,7 @@ providers.push_back(provider);
 ```
 
 #### Verification
+
 - ✅ Action history: Max 1000 per agent
 - ✅ Oracle history: Max 1000 per key
 - ✅ Provider list: Max 100 providers
@@ -316,28 +349,33 @@ providers.push_back(provider);
 
 ### HIGH-003: Missing Input Validation on String and Array Parameters
 
-**Severity**: 🟠 HIGH  
-**Category**: Input Validation  
+**Severity**: 🟠 HIGH
+**Category**: Input Validation
 **Status**: ✅ FIXED
 
 #### Description
+
 User-provided strings and arrays were not validated for length or content, allowing:
+
 - Massive strings that consume storage and gas
 - Array sizes that cause unbounded loops
 - Invalid enum values causing panics
 
 #### Affected Parameters
+
 - Agent names, model hashes
 - Capability arrays
 - Rule names and data
 - Oracle keys, values, sources
 
 #### Root Cause
+
 Functions accepted `String` and `Vec` types without checking their sizes.
 
 #### Fix Applied
 
 **1. Define maximum constants**:
+
 ```rust
 // In shared/lib.rs
 pub const MAX_STRING_LENGTH: usize = 256;
@@ -349,6 +387,7 @@ pub const MAX_DURATION_DAYS: u64 = 36500;
 ```
 
 **2. Validate on input**:
+
 ```rust
 // BEFORE (Unsafe)
 pub fn mint_agent(..., name: String, ...) {
@@ -378,6 +417,7 @@ pub fn mint_agent(..., name: String, ...) {
 ```
 
 **3. Validate numeric ranges**:
+
 ```rust
 if price < shared::PRICE_LOWER_BOUND || price > shared::PRICE_UPPER_BOUND {
     panic!("Price out of valid range");
@@ -393,8 +433,9 @@ if percentage > shared::MAX_ROYALTY_PERCENTAGE {
 ```
 
 #### Verification
+
 - ✅ All string inputs checked against MAX_STRING_LENGTH
-- ✅ All array inputs checked against MAX_* constants
+- ✅ All array inputs checked against MAX\_\* constants
 - ✅ All prices checked against bounds
 - ✅ All durations validated
 - ✅ All percentages validated
@@ -405,27 +446,32 @@ if percentage > shared::MAX_ROYALTY_PERCENTAGE {
 
 ### MEDIUM-001: Missing Rate Limiting on Sensitive Operations
 
-**Severity**: 🟡 MEDIUM  
-**Category**: Denial of Service / Rate Limiting  
+**Severity**: 🟡 MEDIUM
+**Category**: Denial of Service / Rate Limiting
 **Status**: ✅ FIXED
 
 #### Description
+
 Critical functions like action execution and faucet claims could be called repeatedly in rapid succession, potentially:
+
 - Flooding the blockchain with spam transactions
 - Enabling brute-force attacks
 - Causing legitimate users to be rate-limited
 
 #### Affected Operations
+
 - Action execution
 - Faucet claims
 - Data submissions
 
 #### Root Cause
+
 Functions had no rate limiting logic; they accepted all valid requests.
 
 #### Fix Applied
 
 **1. Per-agent action rate limiting**:
+
 ```rust
 pub fn execute_action(...) {
     // ... validation ...
@@ -435,7 +481,7 @@ pub fn execute_action(...) {
 
 fn check_rate_limit(env: &Env, agent_id: u64, max_ops: u32, window: u64) {
     let now = env.ledger().timestamp();
-    let limit_key = String::from_slice(&env, 
+    let limit_key = String::from_slice(&env,
         &format!("{}{}", RATE_LIMIT_KEY_PREFIX, agent_id).as_bytes()
     );
 
@@ -458,6 +504,7 @@ fn check_rate_limit(env: &Env, agent_id: u64, max_ops: u32, window: u64) {
 ```
 
 **2. Faucet claim cooldown**:
+
 ```rust
 pub fn claim_test_agent(...) {
     if !Self::check_eligibility(&env, &claimer) {
@@ -471,7 +518,7 @@ pub fn check_eligibility(env: Env, address: Address) -> bool {
         .get(&Symbol::new(&env, CLAIM_COOLDOWN_KEY))
         .unwrap_or(DEFAULT_COOLDOWN_SECONDS);  // 24 hours
 
-    let last_claim_key = String::from_slice(&env, 
+    let last_claim_key = String::from_slice(&env,
         &format!("{}{}", LAST_CLAIM_KEY_PREFIX, address).as_bytes()
     );
     let last_claim: Option<u64> = env.storage().instance().get(&last_claim_key);
@@ -488,6 +535,7 @@ pub fn check_eligibility(env: Env, address: Address) -> bool {
 ```
 
 #### Verification
+
 - ✅ Execution hub: 100 actions per 60 seconds per agent
 - ✅ Faucet: Configurable cooldown (default 24 hours)
 - ✅ Faucet: Configurable max claims per period
@@ -498,17 +546,20 @@ pub fn check_eligibility(env: Env, address: Address) -> bool {
 
 ### MEDIUM-002: Unsafe Contract Reinitialization
 
-**Severity**: 🟡 MEDIUM  
-**Category**: State Management  
+**Severity**: 🟡 MEDIUM
+**Category**: State Management
 **Status**: ✅ FIXED
 
 #### Description
+
 `init_contract()` functions could be called multiple times, potentially:
+
 - Resetting admin address to new value
 - Resetting counter to zero
 - Clearing historical data
 
 #### Affected Functions
+
 - `agent_nft::init_contract()`
 - `execution_hub::init_contract()`
 - `marketplace::init_contract()`
@@ -517,11 +568,13 @@ pub fn check_eligibility(env: Env, address: Address) -> bool {
 - `faucet::init_faucet()`
 
 #### Root Cause
+
 No check to ensure initialization was done only once.
 
 #### Fix Applied
 
 **1. Idempotence check**:
+
 ```rust
 // BEFORE (Unsafe)
 pub fn init_contract(env: Env, admin: Address) {
@@ -544,6 +597,7 @@ pub fn init_contract(env: Env, admin: Address) {
 ```
 
 #### Verification
+
 - ✅ All init functions check if already initialized
 - ✅ Second call to init_contract() panics
 - ✅ Can be called once and only once
@@ -553,19 +607,23 @@ pub fn init_contract(env: Env, admin: Address) {
 
 ### MEDIUM-003: Missing Double-Spend Protection on Stake Claims
 
-**Severity**: 🟡 MEDIUM  
-**Category**: State Management / Double-Spend  
+**Severity**: 🟡 MEDIUM
+**Category**: State Management / Double-Spend
 **Status**: ✅ FIXED
 
 #### Description
+
 The `claim_stake()` function didn't track whether a stake had already been claimed, allowing:
+
 - Calling claim_stake() twice to get tokens twice
 - Claiming from failed and completed requests simultaneously
 
 #### Affected Function
+
 - `evolution::claim_stake()`
 
 #### Root Cause
+
 No lock or flag mechanism to prevent multiple claims on the same request.
 
 #### Fix Applied
@@ -597,7 +655,7 @@ pub fn claim_stake(env: Env, owner: Address, request_id: u64) {
         .get(&request_key)
         .expect("Request not found");
 
-    if request.status != shared::EvolutionStatus::Completed 
+    if request.status != shared::EvolutionStatus::Completed
         && request.status != shared::EvolutionStatus::Failed {
         panic!("Stake not yet available for claim");
     }
@@ -619,6 +677,7 @@ pub fn claim_stake(env: Env, owner: Address, request_id: u64) {
 ```
 
 #### Verification
+
 - ✅ First claim succeeds
 - ✅ Second claim panics with "already claimed" message
 - ✅ Lock is set before any side effects
@@ -628,33 +687,39 @@ pub fn claim_stake(env: Env, owner: Address, request_id: u64) {
 
 ### MEDIUM-004: Missing Bounds Check on Duration Parameters
 
-**Severity**: 🟡 MEDIUM  
-**Category**: Input Validation  
+**Severity**: 🟡 MEDIUM
+**Category**: Input Validation
 **Status**: ✅ FIXED
 
 #### Description
+
 Duration parameters (e.g., lease duration in days) were not validated, allowing:
+
 - Lease durations of millions of years causing calculation issues
 - Zero-duration leases without validation
 - Potential overflow in timestamp calculations
 
 #### Affected Parameters
+
 - `marketplace::create_listing()` - lease duration_days
 - `oracle::is_data_fresh()` - max_age_seconds
 - `faucet::set_parameters()` - cooldown_seconds
 
 #### Root Cause
+
 Duration values accepted without range validation.
 
 #### Fix Applied
 
 **1. Define duration limits**:
+
 ```rust
 pub const MAX_DURATION_DAYS: u64 = 36500;  // ~100 years
 pub const MAX_AGE_SECONDS: u64 = 365 * 24 * 60 * 60;  // ~1 year
 ```
 
 **2. Validate on input**:
+
 ```rust
 // For marketplace lease
 if listing_type == 1 {  // Lease
@@ -679,6 +744,7 @@ if claim_cooldown_seconds > 365 * 24 * 60 * 60 {
 ```
 
 #### Verification
+
 - ✅ Lease duration: 1 to 36500 days
 - ✅ Data age: 0 to 365 days
 - ✅ Cooldown: 1 second to 365 days
@@ -688,20 +754,24 @@ if claim_cooldown_seconds > 365 * 24 * 60 * 60 {
 
 ### MEDIUM-005: Missing Bounds Check on Percentage Values
 
-**Severity**: 🟡 MEDIUM  
-**Category**: Input Validation  
+**Severity**: 🟡 MEDIUM
+**Category**: Input Validation
 **Status**: ✅ FIXED
 
 #### Description
+
 Royalty percentage values could be invalid, allowing:
+
 - Percentages > 100% causing calculation errors
 - Negative percentages (though type safety prevents this)
 - Percentage calculations to overflow
 
 #### Affected Parameters
+
 - `marketplace::set_royalty()` - percentage parameter
 
 #### Root Cause
+
 Percentage accepted without validation against `MAX_ROYALTY_PERCENTAGE` (10000 = 100%).
 
 #### Fix Applied
@@ -727,6 +797,7 @@ pub fn set_royalty(..., percentage: u32) {
 ```
 
 #### Verification
+
 - ✅ Percentage 0-10000 accepted
 - ✅ Percentage > 10000 rejected
 - ✅ Royalty calculation never overflows
@@ -737,52 +808,58 @@ pub fn set_royalty(..., percentage: u32) {
 
 ### All Issues: FIXED ✅
 
-| Issue | Severity | Category | Status |
-|-------|----------|----------|--------|
-| Missing authentication | CRITICAL | Access Control | ✅ FIXED |
-| Missing ownership verification | CRITICAL | Access Control | ✅ FIXED |
-| No replay protection | CRITICAL | Replay Prevention | ✅ FIXED |
-| Integer overflow risk | HIGH | Arithmetic | ✅ FIXED |
-| Unbounded storage growth | HIGH | DoS | ✅ FIXED |
-| Missing input validation | HIGH | Input Validation | ✅ FIXED |
-| Missing rate limiting | MEDIUM | Rate Limiting | ✅ FIXED |
-| Unsafe reinitialization | MEDIUM | State Management | ✅ FIXED |
-| Missing double-spend protection | MEDIUM | Double-Spend | ✅ FIXED |
-| Missing duration bounds | MEDIUM | Input Validation | ✅ FIXED |
-| Missing percentage bounds | MEDIUM | Input Validation | ✅ FIXED |
+| Issue                           | Severity | Category          | Status   |
+| ------------------------------- | -------- | ----------------- | -------- |
+| Missing authentication          | CRITICAL | Access Control    | ✅ FIXED |
+| Missing ownership verification  | CRITICAL | Access Control    | ✅ FIXED |
+| No replay protection            | CRITICAL | Replay Prevention | ✅ FIXED |
+| Integer overflow risk           | HIGH     | Arithmetic        | ✅ FIXED |
+| Unbounded storage growth        | HIGH     | DoS               | ✅ FIXED |
+| Missing input validation        | HIGH     | Input Validation  | ✅ FIXED |
+| Missing rate limiting           | MEDIUM   | Rate Limiting     | ✅ FIXED |
+| Unsafe reinitialization         | MEDIUM   | State Management  | ✅ FIXED |
+| Missing double-spend protection | MEDIUM   | Double-Spend      | ✅ FIXED |
+| Missing duration bounds         | MEDIUM   | Input Validation  | ✅ FIXED |
+| Missing percentage bounds       | MEDIUM   | Input Validation  | ✅ FIXED |
 
 ---
 
 ## Security Guarantees After Fixes
 
 ### Authentication & Authorization ✅
+
 - All state modifications require proper authentication
 - All resource modifications require ownership verification
 - Admin functions restricted to single admin address
 
 ### Arithmetic Safety ✅
+
 - All arithmetic uses `checked_*` operations
 - Panics on overflow/underflow (fail-safe)
 - No silent wrapping or unexpected results
 
 ### Input Validation ✅
+
 - All strings bounded to 256 characters
 - All arrays bounded to 32-100 items
 - All prices and durations bounded
 - All percentages bounded to 0-100%
 
 ### Replay Protection ✅
+
 - Nonce-based protection with monotonic increase
 - Required nonce field on transactions
 - Stored nonce prevents resubmission
 
 ### Denial of Service Prevention ✅
+
 - Rate limiting on sensitive operations
 - Query result pagination (max 500 items)
 - Storage collections bounded (max 1000 items)
 - Provider list capped at 100
 
 ### State Consistency ✅
+
 - Idempotent initialization
 - Double-spend prevention on claims
 - Atomic operations prevent partial state updates
@@ -795,7 +872,7 @@ pub fn set_royalty(..., percentage: u32) {
 2. **Check Ownership**: Verify resource modifications match owner/creator
 3. **Test Replay**: Attempt to reuse nonces and verify rejection
 4. **Fuzz Inputs**: Test with max/min values and out-of-range values
-5. **Check Arithmetic**: Verify all numeric operations use checked_*
+5. **Check Arithmetic**: Verify all numeric operations use checked\_\*
 6. **Validate Limits**: Confirm all caps are enforced
 7. **Rate Limit Testing**: Verify rate limits work correctly
 8. **Double-Spend**: Attempt multiple claims on same stake
@@ -818,6 +895,6 @@ pub fn set_royalty(..., percentage: u32) {
 
 ---
 
-**Document Version**: 1.0  
-**Status**: Complete and Ready for Audit  
+**Document Version**: 1.0
+**Status**: Complete and Ready for Audit
 **Last Updated**: January 21, 2026

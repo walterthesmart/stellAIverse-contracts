@@ -80,11 +80,11 @@ impl AgentNFT {
         admin.require_auth();
         env.storage().instance().set(&Symbol::new(&env, ADMIN_KEY), &admin);
         env.storage().instance().set(&Symbol::new(&env, AGENT_COUNTER_KEY), &0u64);
-        
+
         // Initialize approved minters list (empty by default)
         let approved_minters: Vec<Address> = Vec::new(&env);
         env.storage().instance().set(&Symbol::new(&env, APPROVED_MINTERS_KEY), &approved_minters);
-        
+
         Ok(())
     }
 
@@ -120,7 +120,7 @@ impl AgentNFT {
             .instance()
             .get(&Symbol::new(env, ADMIN_KEY))
             .ok_or(ContractError::Unauthorized)?;
-        
+
         if caller != &admin {
             return Err(ContractError::Unauthorized);
         }
@@ -180,7 +180,7 @@ impl AgentNFT {
     }
 
     /// Mint a new agent NFT - Implements requirement from issue
-    /// 
+    ///
     /// # Arguments
     /// * `agent_id` - Unique identifier for the agent (u128 in spec, using u64 for storage efficiency)
     /// * `owner` - Address of the agent owner
@@ -202,7 +202,7 @@ impl AgentNFT {
         initial_evolution_level: u32,
     ) -> Result<(), ContractError> {
         owner.require_auth();
-        
+
         // Validate caller authorization (admin or approved minter)
         Self::verify_minter(&env, &owner)?;
 
@@ -237,7 +237,7 @@ impl AgentNFT {
         // Persist agent data
         let key = Self::get_agent_key(&env, agent_id_u64);
         env.storage().instance().set(&key, &agent);
-        
+
         // Initialize lease status to false (not leased)
         Self::set_agent_lease_status(&env, agent_id_u64, false);
 
@@ -259,7 +259,7 @@ impl AgentNFT {
         capabilities: Vec<String>,
     ) -> Result<u64, ContractError> {
         owner.require_auth();
-        
+
         // Validate caller authorization
         Self::verify_minter(&env, &owner)?;
 
@@ -288,9 +288,9 @@ impl AgentNFT {
             .instance()
             .get(&Symbol::new(&env, AGENT_COUNTER_KEY))
             .unwrap_or(0);
-        
+
         let agent_id = Self::safe_add(counter, 1)?;
-        
+
         // Create agent
         let agent = Agent {
             id: agent_id,
@@ -303,17 +303,17 @@ impl AgentNFT {
             created_at: env.ledger().timestamp(),
             updated_at: env.ledger().timestamp(),
             nonce: 0,
-            escrow_locked: false,
-            escrow_holder: None,
+            // escrow_locked: false,
+            // escrow_holder: None,
         };
 
         // Store agent
         let key = Self::get_agent_key(&env, agent_id);
         env.storage().instance().set(&key, &agent);
-        
+
         // Initialize lease status
         Self::set_agent_lease_status(&env, agent_id, false);
-        
+
         // Update counter
         env.storage().instance().set(&Symbol::new(&env, AGENT_COUNTER_KEY), &agent_id);
 
@@ -396,7 +396,7 @@ impl AgentNFT {
         agent.updated_at = env.ledger().timestamp();
 
         env.storage().instance().set(&key, &agent);
-        
+
         env.events().publish(
             (Symbol::new(&env, "agent_nft"), AgentEvent::AgentUpdated),
             (agent_id, owner)
@@ -513,7 +513,7 @@ impl AgentNFT {
         }
 
         Self::set_agent_lease_status(&env, agent_id, true);
-        
+
         env.events().publish(
             (Symbol::new(&env, "agent_nft"), AgentEvent::LeaseStarted),
             (agent_id, env.ledger().timestamp())
@@ -529,7 +529,7 @@ impl AgentNFT {
         }
 
         Self::set_agent_lease_status(&env, agent_id, false);
-        
+
         env.events().publish(
             (Symbol::new(&env, "agent_nft"), AgentEvent::LeaseEnded),
             (agent_id, env.ledger().timestamp())

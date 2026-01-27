@@ -20,7 +20,7 @@ fn test_basic_functionality() {
     // Create a mock agent directly in storage for testing
     let agent_id = 1u64;
     let agent_key_str = String::from_str(&env, "agent_");
-    let agent = shared::Agent {
+    let agent = stellai_lib::Agent {
         id: agent_id,
         owner: seller.clone(),
         name: String::from_str(&env, "Test Agent"),
@@ -56,7 +56,7 @@ fn test_basic_functionality() {
     assert!(listing_id > 0);
 
     // Verify agent is now locked in escrow
-    let updated_agent: shared::Agent = env.storage()
+    let updated_agent: stellai_lib::Agent = env.storage()
         .instance()
         .get(&agent_key_str)
         .unwrap();
@@ -67,7 +67,7 @@ fn test_basic_functionality() {
     Marketplace::cancel_listing(env.clone(), listing_id, seller.clone());
 
     // Verify agent is released from escrow
-    let final_agent: shared::Agent = env.storage()
+    let final_agent: stellai_lib::Agent = env.storage()
         .instance()
         .get(&agent_key_str)
         .unwrap();
@@ -92,7 +92,7 @@ fn test_ownership_validation() {
     // Create a mock agent directly in storage
     let agent_id = 1u64;
     let agent_key_str = String::from_str(&env, "agent_");
-    let agent = shared::Agent {
+    let agent = stellai_lib::Agent {
         id: agent_id,
         owner: owner.clone(),
         name: String::from_str(&env, "Test Agent"),
@@ -138,7 +138,7 @@ fn test_royalty_functionality() {
     // Create a mock agent directly in storage
     let agent_id = 1u64;
     let agent_key_str = String::from_str(&env, "agent_");
-    let agent = shared::Agent {
+    let agent = stellai_lib::Agent {
         id: agent_id,
         owner: creator.clone(),
         name: String::from_str(&env, "Test Agent"),

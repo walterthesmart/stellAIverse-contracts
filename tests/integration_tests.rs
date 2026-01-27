@@ -1,7 +1,7 @@
 #![cfg(test)]
 
-use soroban_sdk::{Address, Env, String, Vec};
 use crate::Marketplace;
+use soroban_sdk::{Address, Env, String, Vec};
 
 struct TestSetup {
     env: Env,
@@ -33,16 +33,19 @@ impl TestSetup {
         }
     }
 
-    fn create_mock_agent(&self, id: u64, owner: Address) -> shared::Agent {
-        let agent = shared::Agent {
+    fn create_mock_agent(&self, id: u64, owner: Address) -> stellai_lib::Agent {
+        let agent = stellai_lib::Agent {
             id,
             owner: owner.clone(),
             name: String::from_str(&self.env, "TestAgent"),
             model_hash: String::from_str(&self.env, "hash_value"),
-            capabilities: Vec::from_array(&self.env, [
-                String::from_str(&self.env, "learn"),
-                String::from_str(&self.env, "execute"),
-            ]),
+            capabilities: Vec::from_array(
+                &self.env,
+                [
+                    String::from_str(&self.env, "learn"),
+                    String::from_str(&self.env, "execute"),
+                ],
+            ),
             evolution_level: 0,
             created_at: self.env.ledger().timestamp(),
             updated_at: self.env.ledger().timestamp(),
@@ -71,7 +74,7 @@ fn test_full_flow_mint_list_buy_stake_evolve() {
     let agent_id = 1u64;
     let _agent = setup.create_mock_agent(agent_id, setup.seller.clone());
     let agent_key = String::from_str(env, "agent_1");
-    let stored_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
+    let stored_agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
     assert_eq!(stored_agent.id, agent_id);
     assert_eq!(stored_agent.owner, setup.seller);
     assert_eq!(stored_agent.evolution_level, 0);
@@ -80,16 +83,10 @@ fn test_full_flow_mint_list_buy_stake_evolve() {
 
     // Stage 2: LIST - Create marketplace listing
     let price = 1000_i128;
-    let listing_id = Marketplace::create_listing(
-        env.clone(),
-        agent_id,
-        setup.seller.clone(),
-        0,
-        price,
-        None,
-    );
+    let listing_id =
+        Marketplace::create_listing(env.clone(), agent_id, setup.seller.clone(), 0, price, None);
     assert_eq!(listing_id, 1);
-    
+
     let listing_key = String::from_str(env, "listing_1");
     let listing: shared::Listing = env.storage().instance().get(&listing_key).unwrap();
     assert_eq!(listing.agent_id, agent_id);
@@ -97,22 +94,22 @@ fn test_full_flow_mint_list_buy_stake_evolve() {
     assert_eq!(listing.price, price);
     assert!(listing.active);
 
-    let locked_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
+    let locked_agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
     assert!(locked_agent.escrow_locked);
-    assert_eq!(locked_agent.escrow_holder, Some(setup.agent_nft_contract.clone()));
+    assert_eq!(
+        locked_agent.escrow_holder,
+        Some(setup.agent_nft_contract.clone())
+    );
 
     // Stage 3: BUY - Execute purchase
-    let purchase_result = Marketplace::purchase_listing(
-        env.clone(),
-        listing_id,
-        setup.buyer.clone(),
-    );
+    let purchase_result =
+        Marketplace::purchase_listing(env.clone(), listing_id, setup.buyer.clone());
     assert!(purchase_result);
 
     let purchased_listing: shared::Listing = env.storage().instance().get(&listing_key).unwrap();
     assert!(!purchased_listing.active);
 
-    let buyer_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
+    let buyer_agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
     assert_eq!(buyer_agent.owner, setup.buyer);
     assert!(!buyer_agent.escrow_locked);
 
@@ -129,9 +126,12 @@ fn test_full_flow_mint_list_buy_stake_evolve() {
     };
 
     let request_key = String::from_str(env, "request_1");
-    env.storage().instance().set(&request_key, &evolution_request);
+    env.storage()
+        .instance()
+        .set(&request_key, &evolution_request);
 
-    let stored_request: shared::EvolutionRequest = env.storage().instance().get(&request_key).unwrap();
+    let stored_request: shared::EvolutionRequest =
+        env.storage().instance().get(&request_key).unwrap();
     assert_eq!(stored_request.status, shared::EvolutionStatus::Pending);
     assert_eq!(stored_request.stake_amount, stake_amount);
 
@@ -152,21 +152,24 @@ fn test_full_flow_mint_list_buy_stake_evolve() {
     let mut completed_request = stored_request;
     completed_request.status = shared::EvolutionStatus::Completed;
     completed_request.completed_at = Some(env.ledger().timestamp());
-    env.storage().instance().set(&request_key, &completed_request);
+    env.storage()
+        .instance()
+        .set(&request_key, &completed_request);
 
-    let evolved_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
+    let evolved_agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
     let mut final_agent = evolved_agent;
     final_agent.evolution_level = 1;
     final_agent.updated_at = env.ledger().timestamp();
     env.storage().instance().set(&agent_key, &final_agent);
 
-    let final_stored_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
+    let final_stored_agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
     assert_eq!(final_stored_agent.evolution_level, 1);
     assert_eq!(final_stored_agent.owner, setup.buyer);
     assert_eq!(final_stored_agent.id, agent_id);
     assert!(!final_stored_agent.escrow_locked);
 
-    let final_request: shared::EvolutionRequest = env.storage().instance().get(&request_key).unwrap();
+    let final_request: shared::EvolutionRequest =
+        env.storage().instance().get(&request_key).unwrap();
     assert_eq!(final_request.status, shared::EvolutionStatus::Completed);
     assert!(final_request.completed_at.is_some());
 }
@@ -180,9 +183,12 @@ fn test_multiple_agents_parallel_listings() {
     setup.create_mock_agent(2, setup.seller.clone());
     setup.create_mock_agent(3, setup.seller.clone());
 
-    let listing_1 = Marketplace::create_listing(env.clone(), 1, setup.seller.clone(), 0, 1000, None);
-    let listing_2 = Marketplace::create_listing(env.clone(), 2, setup.seller.clone(), 0, 1500, None);
-    let listing_3 = Marketplace::create_listing(env.clone(), 3, setup.seller.clone(), 0, 2000, None);
+    let listing_1 =
+        Marketplace::create_listing(env.clone(), 1, setup.seller.clone(), 0, 1000, None);
+    let listing_2 =
+        Marketplace::create_listing(env.clone(), 2, setup.seller.clone(), 0, 1500, None);
+    let listing_3 =
+        Marketplace::create_listing(env.clone(), 3, setup.seller.clone(), 0, 2000, None);
 
     assert_eq!(listing_1, 1);
     assert_eq!(listing_2, 2);
@@ -199,7 +205,7 @@ fn test_multiple_agents_parallel_listings() {
     assert!(active_listing.active);
 
     let agent_1_key = String::from_str(env, "agent_1");
-    let agent_1: shared::Agent = env.storage().instance().get(&agent_1_key).unwrap();
+    let agent_1: stellai_lib::Agent = env.storage().instance().get(&agent_1_key).unwrap();
     assert_eq!(agent_1.owner, setup.buyer);
 }
 
@@ -211,24 +217,21 @@ fn test_escrow_security() {
     let agent_id = 1u64;
     setup.create_mock_agent(agent_id, setup.seller.clone());
 
-    let listing_id = Marketplace::create_listing(
-        env.clone(),
-        agent_id,
-        setup.seller.clone(),
-        0,
-        1000,
-        None,
-    );
+    let listing_id =
+        Marketplace::create_listing(env.clone(), agent_id, setup.seller.clone(), 0, 1000, None);
 
     let agent_key = String::from_str(env, "agent_1");
-    let locked_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
-    
+    let locked_agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
+
     assert!(locked_agent.escrow_locked);
-    assert_eq!(locked_agent.escrow_holder, Some(setup.agent_nft_contract.clone()));
+    assert_eq!(
+        locked_agent.escrow_holder,
+        Some(setup.agent_nft_contract.clone())
+    );
 
     Marketplace::purchase_listing(env.clone(), listing_id, setup.buyer.clone());
 
-    let unlocked_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
+    let unlocked_agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
     assert!(!unlocked_agent.escrow_locked);
     assert_eq!(unlocked_agent.escrow_holder, None);
 }
@@ -241,7 +244,8 @@ fn test_evolution_with_oracle_validation() {
     let agent_id = 1u64;
     setup.create_mock_agent(agent_id, setup.seller.clone());
 
-    let listing_id = Marketplace::create_listing(env.clone(), agent_id, setup.seller.clone(), 0, 1000, None);
+    let listing_id =
+        Marketplace::create_listing(env.clone(), agent_id, setup.seller.clone(), 0, 1000, None);
     Marketplace::purchase_listing(env.clone(), listing_id, setup.buyer.clone());
 
     let stake_amount = 500_i128;
@@ -256,7 +260,9 @@ fn test_evolution_with_oracle_validation() {
     };
 
     let request_key = String::from_str(env, "request_1");
-    env.storage().instance().set(&request_key, &evolution_request);
+    env.storage()
+        .instance()
+        .set(&request_key, &evolution_request);
 
     let oracle_data = shared::OracleData {
         key: String::from_str(env, "agent_evolution_price"),
@@ -269,7 +275,10 @@ fn test_evolution_with_oracle_validation() {
     env.storage().instance().set(&oracle_key, &oracle_data);
 
     let stored_oracle: shared::OracleData = env.storage().instance().get(&oracle_key).unwrap();
-    assert_eq!(stored_oracle.key, String::from_str(env, "agent_evolution_price"));
+    assert_eq!(
+        stored_oracle.key,
+        String::from_str(env, "agent_evolution_price")
+    );
 
     let mut completed = evolution_request;
     completed.status = shared::EvolutionStatus::Completed;
@@ -277,14 +286,15 @@ fn test_evolution_with_oracle_validation() {
     env.storage().instance().set(&request_key, &completed);
 
     let agent_key = String::from_str(env, "agent_1");
-    let mut agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
+    let mut agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
     agent.evolution_level = 1;
     agent.updated_at = env.ledger().timestamp();
     env.storage().instance().set(&agent_key, &agent);
 
-    let final_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
-    let final_request: shared::EvolutionRequest = env.storage().instance().get(&request_key).unwrap();
-    
+    let final_agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
+    let final_request: shared::EvolutionRequest =
+        env.storage().instance().get(&request_key).unwrap();
+
     assert_eq!(final_agent.evolution_level, 1);
     assert_eq!(final_request.status, shared::EvolutionStatus::Completed);
 }
@@ -300,13 +310,14 @@ fn test_state_assertions() {
     assert_eq!(agent.evolution_level, 0);
     assert!(!agent.escrow_locked);
 
-    let listing_id = Marketplace::create_listing(env.clone(), agent_id, setup.seller.clone(), 0, 1000, None);
+    let listing_id =
+        Marketplace::create_listing(env.clone(), agent_id, setup.seller.clone(), 0, 1000, None);
     let agent_key = String::from_str(env, "agent_1");
-    let listed_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
+    let listed_agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
     assert!(listed_agent.escrow_locked);
 
     Marketplace::purchase_listing(env.clone(), listing_id, setup.buyer.clone());
-    let purchased_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
+    let purchased_agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
     assert!(!purchased_agent.escrow_locked);
     assert_eq!(purchased_agent.owner, setup.buyer);
 
@@ -321,12 +332,14 @@ fn test_state_assertions() {
     };
 
     let request_key = String::from_str(env, "request_1");
-    env.storage().instance().set(&request_key, &evolution_request);
+    env.storage()
+        .instance()
+        .set(&request_key, &evolution_request);
 
     let mut evolved_agent = purchased_agent;
     evolved_agent.evolution_level = 1;
     env.storage().instance().set(&agent_key, &evolved_agent);
 
-    let final_agent: shared::Agent = env.storage().instance().get(&agent_key).unwrap();
+    let final_agent: stellai_lib::Agent = env.storage().instance().get(&agent_key).unwrap();
     assert_eq!(final_agent.evolution_level, 1);
 }
