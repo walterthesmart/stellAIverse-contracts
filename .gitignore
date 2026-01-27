@@ -14,3 +14,10 @@ Cargo.lock
 # OS
 .DS_Store
 Thumbs.db
+
+# Test artifacts and logs
+*.txt
+*.log
+test_snapshots/
+*.bak
+*.tmp

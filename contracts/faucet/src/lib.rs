@@ -88,14 +88,10 @@ impl Faucet {
 
         // Update rate limiting state
         let now = env.ledger().timestamp();
-        let last_claim_key = String::from_str(
-            &env,
-            &format!("{:?}{:?}", LAST_CLAIM_KEY_PREFIX, claimer),
-        );
-        let claim_count_key = String::from_str(
-            &env,
-            &format!("{:?}{:?}", CLAIM_COUNT_KEY_PREFIX, claimer),
-        );
+        let last_claim_key =
+            String::from_str(&env, &format!("{:?}{:?}", LAST_CLAIM_KEY_PREFIX, claimer));
+        let claim_count_key =
+            String::from_str(&env, &format!("{:?}{:?}", CLAIM_COUNT_KEY_PREFIX, claimer));
 
         env.storage().instance().set(&last_claim_key, &now);
         env.storage().instance().set(&claim_count_key, &1u32);
@@ -120,10 +116,8 @@ impl Faucet {
             .get(&Symbol::new(&env, MAX_CLAIMS_PER_PERIOD_KEY))
             .unwrap_or(DEFAULT_MAX_CLAIMS);
 
-        let last_claim_key = String::from_str(
-            &env,
-            &format!("{:?}{:?}", LAST_CLAIM_KEY_PREFIX, address),
-        );
+        let last_claim_key =
+            String::from_str(&env, &format!("{:?}{:?}", LAST_CLAIM_KEY_PREFIX, address));
         let last_claim: Option<u64> = env.storage().instance().get(&last_claim_key);
 
         match last_claim {
@@ -137,10 +131,8 @@ impl Faucet {
                 }
 
                 // Check claim count within current period
-                let claim_count_key = String::from_str(
-                    &env,
-                    &format!("{:?}{:?}", CLAIM_COUNT_KEY_PREFIX, address),
-                );
+                let claim_count_key =
+                    String::from_str(&env, &format!("{:?}{:?}", CLAIM_COUNT_KEY_PREFIX, address));
                 let claims: u32 = env.storage().instance().get(&claim_count_key).unwrap_or(0);
 
                 claims < max_claims
@@ -210,10 +202,8 @@ impl Faucet {
             .get(&Symbol::new(&env, CLAIM_COOLDOWN_KEY))
             .unwrap_or(DEFAULT_COOLDOWN_SECONDS);
 
-        let last_claim_key = String::from_str(
-            &env,
-            &format!("{:?}{:?}", LAST_CLAIM_KEY_PREFIX, address),
-        );
+        let last_claim_key =
+            String::from_str(&env, &format!("{:?}{:?}", LAST_CLAIM_KEY_PREFIX, address));
         let last_claim: Option<u64> = env.storage().instance().get(&last_claim_key);
 
         match last_claim {

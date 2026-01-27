@@ -159,12 +159,28 @@ impl ExecutionHub {
 
         let execution_id = Self::next_execution_id(&env);
         Self::set_action_nonce(&env, agent_id, nonce);
-        Self::record_action(&env, agent_id, execution_id, &action, &executor, nonce, &execution_hash);
+        Self::record_action(
+            &env,
+            agent_id,
+            execution_id,
+            &action,
+            &executor,
+            nonce,
+            &execution_hash,
+        );
 
         let timestamp = env.ledger().timestamp();
         env.events().publish(
             (symbol_short!("act_exec"),),
-            (execution_id, agent_id, action, executor, timestamp, nonce, execution_hash),
+            (
+                execution_id,
+                agent_id,
+                action,
+                executor,
+                timestamp,
+                nonce,
+                execution_hash,
+            ),
         );
 
         execution_id

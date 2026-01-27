@@ -135,8 +135,7 @@ impl Oracle {
         env.storage().instance().set(&data_key, &oracle_data);
 
         // Store in history (with size limit to prevent DoS)
-        let history_key =
-            String::from_str(&env, &format!("{:?}{:?}", DATA_HISTORY_PREFIX, key));
+        let history_key = String::from_str(&env, &format!("{:?}{:?}", DATA_HISTORY_PREFIX, key));
         let mut history: Vec<shared::OracleData> = env
             .storage()
             .instance()
@@ -177,8 +176,7 @@ impl Oracle {
             panic!("Limit exceeds maximum allowed (500)");
         }
 
-        let history_key =
-            String::from_str(&env, &format!("{:?}{:?}", DATA_HISTORY_PREFIX, key));
+        let history_key = String::from_str(&env, &format!("{:?}{:?}", DATA_HISTORY_PREFIX, key));
         let history: Vec<shared::OracleData> = env
             .storage()
             .instance()
