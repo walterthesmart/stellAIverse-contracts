@@ -1,10 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
-use stellai_lib::{EvolutionRequest, EvolutionStatus};
-
-const ADMIN_KEY: &str = "admin";
-const REQUEST_COUNTER_KEY: &str = "request_counter";
+use stellai_lib::{EvolutionRequest, EvolutionStatus, ADMIN_KEY, REQUEST_COUNTER_KEY};
 
 #[contract]
 pub struct Evolution;

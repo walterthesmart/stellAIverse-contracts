@@ -1,10 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
-use stellai_lib::{Listing, ListingType, RoyaltyInfo};
-
-const ADMIN_KEY: &str = "admin";
-const LISTING_COUNTER_KEY: &str = "listing_counter";
+use stellai_lib::{Listing, ListingType, RoyaltyInfo, ADMIN_KEY, LISTING_COUNTER_KEY};
 
 #[contract]
 pub struct Marketplace;
