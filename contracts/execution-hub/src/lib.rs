@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Symbol, Vec,
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Vec,
 };
 use stellai_lib::{
     ADMIN_KEY, DEFAULT_RATE_LIMIT_OPERATIONS, DEFAULT_RATE_LIMIT_WINDOW_SECONDS, EXEC_CTR_KEY,
@@ -20,10 +20,27 @@ pub struct RuleKey {
 #[contracttype]
 pub struct ActionRecord {
     pub execution_id: u64,
+    pub agent_id: u64,
     pub action: String,
     pub executor: Address,
     pub timestamp: u64,
     pub nonce: u64,
+    /// Cryptographic hash of execution data for off-chain verification (Issue #10)
+    pub execution_hash: Bytes,
+}
+
+/// Immutable execution receipt for off-chain proof storage (Issue #10)
+/// Receipts are stored separately and cannot be modified after creation
+#[derive(Clone)]
+#[contracttype]
+pub struct ExecutionReceipt {
+    pub execution_id: u64,
+    pub agent_id: u64,
+    pub action: String,
+    pub executor: Address,
+    pub timestamp: u64,
+    pub execution_hash: Bytes,
+    pub created_at: u64,
 }
 
 #[derive(Clone)]
@@ -116,7 +133,18 @@ impl ExecutionHub {
         env.storage().instance().get(&rule_key)
     }
 
-    // Execute action with validation and replay protection
+    /// Execute action with validation, replay protection, and proof storage (Issue #10)
+    /// 
+    /// # Arguments
+    /// * `agent_id` - The agent executing the action
+    /// * `executor` - Address of the executor
+    /// * `action` - Action name/type
+    /// * `parameters` - Action parameters
+    /// * `nonce` - Replay protection nonce
+    /// * `execution_hash` - Cryptographic hash for off-chain verification
+    ///
+    /// # Returns
+    /// The execution ID for this action
     pub fn execute_action(
         env: Env,
         agent_id: u64,
@@ -124,12 +152,14 @@ impl ExecutionHub {
         action: String,
         parameters: Bytes,
         nonce: u64,
+        execution_hash: Bytes,
     ) -> u64 {
         executor.require_auth();
 
         Self::validate_agent_id(agent_id);
         Self::validate_string_length(&action, "Action name");
         Self::validate_data_size(&parameters, "Parameters");
+        Self::validate_data_size(&execution_hash, "Execution hash");
 
         // Replay protection
         let stored_nonce = Self::get_action_nonce(&env, agent_id);
@@ -146,13 +176,15 @@ impl ExecutionHub {
         );
 
         let execution_id = Self::next_execution_id(&env);
-        Self::set_action_nonce(&env, agent_id, nonce);
-        Self::record_action_in_history(&env, agent_id, execution_id, &action, &executor, nonce);
-
         let timestamp = env.ledger().timestamp();
+        
+        Self::set_action_nonce(&env, agent_id, nonce);
+        Self::record_action_in_history(&env, agent_id, execution_id, &action, &executor, nonce, &execution_hash);
+        Self::store_execution_receipt(&env, execution_id, agent_id, &action, &executor, timestamp, &execution_hash);
+
         env.events().publish(
             (symbol_short!("act_exec"),),
-            (execution_id, agent_id, action, executor, timestamp, nonce),
+            (execution_id, agent_id, action.clone(), executor.clone(), timestamp, nonce, execution_hash.clone()),
         );
 
         execution_id
@@ -201,6 +233,60 @@ impl ExecutionHub {
             .get(&agent_key)
             .unwrap_or_else(|| Vec::new(&env));
         history.len()
+    }
+
+    /// Get execution receipt by execution ID (Issue #10)
+    /// Read-only getter for immutable execution proofs
+    /// Returns None if the execution ID doesn't exist
+    pub fn get_execution_receipt(env: Env, execution_id: u64) -> Option<ExecutionReceipt> {
+        let receipt_key = symbol_short!("receipt");
+        let exec_receipt_key = (receipt_key, execution_id);
+        env.storage().instance().get(&exec_receipt_key)
+    }
+
+    /// Get agent ID for a given execution ID (Issue #10)
+    /// Provides reverse lookup from execution to agent
+    /// Returns None if the execution ID doesn't exist
+    pub fn get_agent_for_execution(env: Env, execution_id: u64) -> Option<u64> {
+        let exec_agent_key = symbol_short!("exagent");
+        let exec_to_agent_key = (exec_agent_key, execution_id);
+        env.storage().instance().get(&exec_to_agent_key)
+    }
+
+    /// Get all execution receipts for an agent (Issue #10)
+    /// Returns a list of execution receipts for the given agent
+    pub fn get_agent_receipts(env: Env, agent_id: u64, limit: u32) -> Vec<ExecutionReceipt> {
+        Self::validate_agent_id(agent_id);
+        
+        if limit > MAX_HISTORY_QUERY_LIMIT {
+            panic!("Limit exceeds maximum allowed (500)");
+        }
+
+        // Get action history and extract receipts
+        let history_key = symbol_short!("hist");
+        let agent_key = (history_key, agent_id);
+        let history: Vec<ActionRecord> = env
+            .storage()
+            .instance()
+            .get(&agent_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut receipts = Vec::new(&env);
+        let start_idx = if history.len() > limit {
+            history.len() - limit
+        } else {
+            0
+        };
+
+        for i in start_idx..history.len() {
+            if let Some(record) = history.get(i) {
+                if let Some(receipt) = Self::get_execution_receipt(env.clone(), record.execution_id) {
+                    receipts.push_back(receipt);
+                }
+            }
+        }
+
+        receipts
     }
 
     // Get admin address
@@ -268,7 +354,7 @@ impl ExecutionHub {
         env.storage().instance().set(&agent_nonce_key, &nonce);
     }
 
-    // Helper: record action in history
+    // Helper: record action in history with execution hash (Issue #10)
     fn record_action_in_history(
         env: &Env,
         agent_id: u64,
@@ -276,6 +362,7 @@ impl ExecutionHub {
         action: &String,
         executor: &Address,
         nonce: u64,
+        execution_hash: &Bytes,
     ) {
         let history_key = symbol_short!("hist");
         let agent_key = (history_key, agent_id);
@@ -293,14 +380,50 @@ impl ExecutionHub {
         let timestamp = env.ledger().timestamp();
         let record = ActionRecord {
             execution_id,
+            agent_id,
             action: action.clone(),
             executor: executor.clone(),
             timestamp,
             nonce,
+            execution_hash: execution_hash.clone(),
         };
 
         history.push_back(record);
         env.storage().instance().set(&agent_key, &history);
+    }
+
+    /// Helper: store immutable execution receipt (Issue #10)
+    /// Receipts are stored separately and cannot be modified after creation
+    fn store_execution_receipt(
+        env: &Env,
+        execution_id: u64,
+        agent_id: u64,
+        action: &String,
+        executor: &Address,
+        timestamp: u64,
+        execution_hash: &Bytes,
+    ) {
+        let receipt_key = symbol_short!("receipt");
+        let exec_receipt_key = (receipt_key, execution_id);
+
+        // Create immutable receipt
+        let receipt = ExecutionReceipt {
+            execution_id,
+            agent_id,
+            action: action.clone(),
+            executor: executor.clone(),
+            timestamp,
+            execution_hash: execution_hash.clone(),
+            created_at: env.ledger().timestamp(),
+        };
+
+        // Store receipt - immutable after creation
+        env.storage().instance().set(&exec_receipt_key, &receipt);
+
+        // Map execution ID to agent for reverse lookups
+        let exec_agent_key = symbol_short!("exagent");
+        let exec_to_agent_key = (exec_agent_key, execution_id);
+        env.storage().instance().set(&exec_to_agent_key, &agent_id);
     }
 
     // Helper: check rate limit
@@ -384,12 +507,14 @@ mod test {
 
         let action = String::from_str(&env, "test_action");
         let params = Bytes::from_array(&env, &[1, 2, 3]);
+        let exec_hash = Bytes::from_array(&env, &[0xab, 0xcd, 0xef]);
 
-        let exec_id_1 = client.execute_action(&1, &executor, &action, &params, &1);
+        let exec_id_1 = client.execute_action(&1, &executor, &action, &params, &1, &exec_hash);
         assert_eq!(exec_id_1, 1);
         assert_eq!(client.get_execution_counter(), 1);
 
-        let exec_id_2 = client.execute_action(&1, &executor, &action, &params, &2);
+        let exec_hash_2 = Bytes::from_array(&env, &[0x12, 0x34, 0x56]);
+        let exec_id_2 = client.execute_action(&1, &executor, &action, &params, &2, &exec_hash_2);
         assert_eq!(exec_id_2, 2);
         assert_eq!(client.get_execution_counter(), 2);
     }
@@ -431,9 +556,10 @@ mod test {
 
         let action = String::from_str(&env, "test");
         let params = Bytes::from_array(&env, &[1]);
+        let exec_hash = Bytes::from_array(&env, &[0xaa, 0xbb]);
 
-        client.execute_action(&1, &executor, &action, &params, &1);
-        client.execute_action(&1, &executor, &action, &params, &1);
+        client.execute_action(&1, &executor, &action, &params, &1, &exec_hash);
+        client.execute_action(&1, &executor, &action, &params, &1, &exec_hash);
     }
 
     #[test]
@@ -450,9 +576,11 @@ mod test {
 
         let action = String::from_str(&env, "test_action");
         let params = Bytes::from_array(&env, &[1]);
+        let exec_hash_1 = Bytes::from_array(&env, &[0x11, 0x22]);
+        let exec_hash_2 = Bytes::from_array(&env, &[0x33, 0x44]);
 
-        client.execute_action(&1, &executor, &action, &params, &1);
-        client.execute_action(&1, &executor, &action, &params, &2);
+        client.execute_action(&1, &executor, &action, &params, &1, &exec_hash_1);
+        client.execute_action(&1, &executor, &action, &params, &2, &exec_hash_2);
 
         let history = client.get_history(&1, &10);
         assert_eq!(history.len(), 2);
@@ -491,10 +619,124 @@ mod test {
         let params = Bytes::from_array(&env, &[1]);
 
         for i in 1..=10 {
-            client.execute_action(&1, &executor, &action, &params, &i);
+            let exec_hash = Bytes::from_array(&env, &[i as u8, (i * 2) as u8]);
+            client.execute_action(&1, &executor, &action, &params, &i, &exec_hash);
         }
 
-        let result = client.execute_action(&1, &executor, &action, &params, &11);
+        let exec_hash_11 = Bytes::from_array(&env, &[11, 22]);
+        let result = client.execute_action(&1, &executor, &action, &params, &11, &exec_hash_11);
         assert!(result > 0);
+    }
+
+    // Issue #10: Tests for execution receipt functionality
+    #[test]
+    fn test_execution_receipt_storage() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let executor = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        let action = String::from_str(&env, "transfer");
+        let params = Bytes::from_array(&env, &[1, 2, 3]);
+        let exec_hash = Bytes::from_array(&env, &[0xde, 0xad, 0xbe, 0xef]);
+
+        let exec_id = client.execute_action(&1, &executor, &action, &params, &1, &exec_hash);
+
+        // Verify receipt was stored
+        let receipt = client.get_execution_receipt(&exec_id);
+        assert!(receipt.is_some());
+        
+        let receipt = receipt.unwrap();
+        assert_eq!(receipt.execution_id, exec_id);
+        assert_eq!(receipt.agent_id, 1);
+        assert_eq!(receipt.action, action);
+        assert_eq!(receipt.executor, executor);
+        assert_eq!(receipt.execution_hash, exec_hash);
+    }
+
+    #[test]
+    fn test_get_agent_for_execution() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let executor = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        let action = String::from_str(&env, "action");
+        let params = Bytes::from_array(&env, &[1]);
+        let exec_hash = Bytes::from_array(&env, &[0xca, 0xfe]);
+
+        let exec_id = client.execute_action(&42, &executor, &action, &params, &1, &exec_hash);
+
+        // Verify reverse lookup works
+        let agent_id = client.get_agent_for_execution(&exec_id);
+        assert!(agent_id.is_some());
+        assert_eq!(agent_id.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_get_agent_receipts() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let executor = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        let action = String::from_str(&env, "batch_action");
+        let params = Bytes::from_array(&env, &[1]);
+
+        // Execute multiple actions for the same agent
+        for i in 1..=5u64 {
+            let exec_hash = Bytes::from_array(&env, &[i as u8, (i * 10) as u8]);
+            client.execute_action(&1, &executor, &action, &params, &i, &exec_hash);
+        }
+
+        // Get all receipts for agent
+        let receipts = client.get_agent_receipts(&1, &10);
+        assert_eq!(receipts.len(), 5);
+    }
+
+    #[test]
+    fn test_receipt_immutability() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ExecutionHub);
+        let client = ExecutionHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let executor = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        let action = String::from_str(&env, "immutable_test");
+        let params = Bytes::from_array(&env, &[1]);
+        let exec_hash = Bytes::from_array(&env, &[0x11, 0x22, 0x33]);
+
+        let exec_id = client.execute_action(&1, &executor, &action, &params, &1, &exec_hash);
+
+        // Get receipt
+        let receipt_1 = client.get_execution_receipt(&exec_id).unwrap();
+        
+        // Execute another action
+        let exec_hash_2 = Bytes::from_array(&env, &[0x44, 0x55, 0x66]);
+        client.execute_action(&1, &executor, &action, &params, &2, &exec_hash_2);
+
+        // Original receipt should remain unchanged
+        let receipt_2 = client.get_execution_receipt(&exec_id).unwrap();
+        assert_eq!(receipt_1.execution_hash, receipt_2.execution_hash);
+        assert_eq!(receipt_1.timestamp, receipt_2.timestamp);
     }
 }

@@ -1,11 +1,9 @@
 #![no_std]
 
-extern crate alloc;
-use alloc::format;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Symbol, Vec};
 use stellai_lib::{
-    errors::ContractError, Agent, ADMIN_KEY, AGENT_COUNTER_KEY, AGENT_KEY_PREFIX,
-    AGENT_LEASE_STATUS_PREFIX, APPROVED_MINTERS_KEY, MAX_CAPABILITIES, MAX_STRING_LENGTH,
+    errors::ContractError, Agent, ADMIN_KEY, AGENT_COUNTER_KEY,
+    APPROVED_MINTERS_KEY, MAX_CAPABILITIES, MAX_STRING_LENGTH,
 };
 
 // ============================================================================
@@ -467,6 +465,7 @@ impl AgentNFT {
     }
 
     /// Get current owner of an agent
+    /// Read-only query function for off-chain consumers (Issue #6)
     pub fn get_agent_owner(env: Env, agent_id: u64) -> Result<Address, ContractError> {
         if agent_id == 0 {
             return Err(ContractError::InvalidAgentId);
@@ -477,6 +476,38 @@ impl AgentNFT {
             .instance()
             .get::<_, Agent>(&key)
             .map(|agent| agent.owner)
+            .ok_or(ContractError::AgentNotFound)
+    }
+
+    /// Get agent metadata CID (IPFS hash)
+    /// Read-only query function for off-chain consumers (Issue #6)
+    /// Returns the IPFS CID for the agent's metadata
+    pub fn get_agent_metadata(env: Env, agent_id: u64) -> Result<String, ContractError> {
+        if agent_id == 0 {
+            return Err(ContractError::InvalidAgentId);
+        }
+
+        let key = Self::get_agent_key(&env, agent_id);
+        env.storage()
+            .instance()
+            .get::<_, Agent>(&key)
+            .map(|agent| agent.metadata_cid)
+            .ok_or(ContractError::AgentNotFound)
+    }
+
+    /// Get agent evolution level
+    /// Read-only query function for off-chain consumers (Issue #6)
+    /// Returns the current evolution level of the agent
+    pub fn get_agent_evolution_level(env: Env, agent_id: u64) -> Result<u32, ContractError> {
+        if agent_id == 0 {
+            return Err(ContractError::InvalidAgentId);
+        }
+
+        let key = Self::get_agent_key(&env, agent_id);
+        env.storage()
+            .instance()
+            .get::<_, Agent>(&key)
+            .map(|agent| agent.evolution_level)
             .ok_or(ContractError::AgentNotFound)
     }
 
@@ -539,3 +570,140 @@ impl AgentNFT {
         Ok(Self::is_agent_leased(&env, agent_id))
     }
 }
+
+// ============================================================================
+// Tests for Issue #6: Read-only agent query functions
+// ============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Env};
+
+    fn setup_contract(env: &Env) -> (AgentNFTClient, Address) {
+        let contract_id = env.register_contract(None, AgentNFT);
+        let client = AgentNFTClient::new(env, &contract_id);
+        let admin = Address::generate(env);
+        
+        env.mock_all_auths();
+        client.init_contract(&admin);
+        
+        (client, admin)
+    }
+
+    fn mint_test_agent(env: &Env, client: &AgentNFTClient, owner: &Address, agent_id: u128, metadata_cid: &str, evolution_level: u32) {
+        let metadata = String::from_str(env, metadata_cid);
+        client.mint_agent(&agent_id, owner, &metadata, &evolution_level);
+    }
+
+    #[test]
+    fn test_get_agent_owner() {
+        let env = Env::default();
+        let (client, admin) = setup_contract(&env);
+        
+        let owner = Address::generate(&env);
+        client.add_approved_minter(&admin, &owner);
+        
+        env.mock_all_auths();
+        mint_test_agent(&env, &client, &owner, 1, "QmTestCID123", 1);
+        
+        // Test get_agent_owner returns correct owner
+        let result = client.get_agent_owner(&1);
+        assert_eq!(result, owner);
+    }
+
+    #[test]
+    fn test_get_agent_metadata() {
+        let env = Env::default();
+        let (client, admin) = setup_contract(&env);
+        
+        let owner = Address::generate(&env);
+        client.add_approved_minter(&admin, &owner);
+        
+        let metadata_cid = "QmTestMetadataCID456";
+        env.mock_all_auths();
+        mint_test_agent(&env, &client, &owner, 2, metadata_cid, 5);
+        
+        // Test get_agent_metadata returns correct CID
+        let result = client.get_agent_metadata(&2);
+        assert_eq!(result, String::from_str(&env, metadata_cid));
+    }
+
+    #[test]
+    fn test_get_agent_evolution_level() {
+        let env = Env::default();
+        let (client, admin) = setup_contract(&env);
+        
+        let owner = Address::generate(&env);
+        client.add_approved_minter(&admin, &owner);
+        
+        let evolution_level = 7u32;
+        env.mock_all_auths();
+        mint_test_agent(&env, &client, &owner, 3, "QmEvolutionTest", evolution_level);
+        
+        // Test get_agent_evolution_level returns correct level
+        let result = client.get_agent_evolution_level(&3);
+        assert_eq!(result, evolution_level);
+    }
+
+    #[test]
+    fn test_query_non_existent_agent() {
+        let env = Env::default();
+        let (client, _admin) = setup_contract(&env);
+        
+        // Try to query a non-existent agent - should return AgentNotFound
+        let result = client.try_get_agent_owner(&999);
+        assert!(result.is_err());
+        
+        let result = client.try_get_agent_metadata(&999);
+        assert!(result.is_err());
+        
+        let result = client.try_get_agent_evolution_level(&999);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_query_zero_agent_id() {
+        let env = Env::default();
+        let (client, _admin) = setup_contract(&env);
+        
+        // Query with agent_id = 0 should return InvalidAgentId
+        let result = client.try_get_agent_owner(&0);
+        assert!(result.is_err());
+        
+        let result = client.try_get_agent_metadata(&0);
+        assert!(result.is_err());
+        
+        let result = client.try_get_agent_evolution_level(&0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_query_functions_no_state_mutation() {
+        let env = Env::default();
+        let (client, admin) = setup_contract(&env);
+        
+        let owner = Address::generate(&env);
+        client.add_approved_minter(&admin, &owner);
+        
+        env.mock_all_auths();
+        mint_test_agent(&env, &client, &owner, 4, "QmImmutableTest", 3);
+        
+        // Get initial state
+        let initial_owner = client.get_agent_owner(&4);
+        let initial_metadata = client.get_agent_metadata(&4);
+        let initial_level = client.get_agent_evolution_level(&4);
+        
+        // Call query functions multiple times
+        for _ in 0..5 {
+            client.get_agent_owner(&4);
+            client.get_agent_metadata(&4);
+            client.get_agent_evolution_level(&4);
+        }
+        
+        // Verify state remains unchanged
+        assert_eq!(client.get_agent_owner(&4), initial_owner);
+        assert_eq!(client.get_agent_metadata(&4), initial_metadata);
+        assert_eq!(client.get_agent_evolution_level(&4), initial_level);
+    }
+}
+
